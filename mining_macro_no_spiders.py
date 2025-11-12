@@ -617,111 +617,46 @@ class MiningMacroNoSpiders:
         self.reset_btn.config(state=tk.NORMAL)
         self.status_var.set("Stopped")
 
-    def detect_any_template(self, screenshot, templates, confidence=0.7, region=None):
-        """Detect if any template matches in the screenshot.
-        
-        Args:
-            screenshot: The screenshot to search in (numpy array)
-            templates: List of template filenames to search for
-            confidence: Minimum confidence threshold (0.0 to 1.0)
-            region: Optional (x, y, w, h) tuple to search within a specific region of the screenshot
-            
-        Returns:
-            tuple: (confidence, location, template_size) if found, (0.0, None, None) otherwise
-        """
+    def detect_any_template(self, screenshot, templates, confidence=0.7):
+        """Detect if any template matches in the screenshot."""
         best_match_val = 0.0
         best_match_loc = None
         best_match_template_size = None
         best_template_name = None
         
-        # If region is specified, crop the screenshot to that region
-        try:
-            search_img = screenshot
-            if region is not None:
-                x, y, w, h = region
-                if x < 0 or y < 0 or w <= 0 or h <= 0:
-                    print(f"[WARN] Invalid region: {region}")
-                    return (0.0, None, None)
-                search_img = screenshot[y:y+h, x:x+w]
-                if search_img.size == 0:
-                    print(f"[WARN] Empty search image after region crop: {region}")
-                    return (0.0, None, None)
-            
-            for template_file in templates:
-                try:
-                    template_path = resource_path(f'assets/{template_file}')
-                    if not os.path.exists(template_path):
-                        print(f"[WARN] Template not found: {template_path}")
-                        continue
-                        
-                    template = cv2.imread(template_path, cv2.IMREAD_COLOR)
-                    if template is None:
-                        print(f"[WARN] Failed to load template: {template_file}")
-                        continue
-                        
-                    # Check if template is larger than search image
-                    if template.shape[0] > search_img.shape[0] or template.shape[1] > search_img.shape[1]:
-                        print(f"[WARN] Template {template_file} is larger than search area")
-                        continue
-                    
-                    # Convert both images to grayscale for better matching
-                    search_gray = cv2.cvtColor(search_img, cv2.COLOR_BGR2GRAY)
-                    template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-                    
-                    # Try multiple template matching methods
-                    methods = [cv2.TM_CCOEFF_NORMED, cv2.TM_CCORR_NORMED, cv2.TM_SQDIFF_NORMED]
-                    
-                    for method in methods:
-                        result = cv2.matchTemplate(search_gray, template_gray, method)
-                        
-                        # For SQDIFF, we want the minimum value (best match)
-                        if method in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
-                            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-                            current_val = 1.0 - min_val  # Convert to similarity score
-                            current_loc = min_loc
-                        else:
-                            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-                            current_val = max_val
-                            current_loc = max_loc
-                        
-                        # Adjust the match location if we're searching in a region
-                        if region is not None:
-                            current_loc = (current_loc[0] + region[0], current_loc[1] + region[1])
-                        
-                        # Debug visualization
-                        if self.ENABLE_DEBUG and current_val > best_match_val and self.debug_screenshot_count < self.max_debug_screenshots:
-                            debug_img = search_img.copy()
-                            h, w = template.shape[:2]
-                            top_left = (current_loc[0] - (region[0] if region else 0), 
-                                      current_loc[1] - (region[1] if region else 0))
-                            bottom_right = (top_left[0] + w, top_left[1] + h)
-                            cv2.rectangle(debug_img, top_left, bottom_right, (0, 0, 255), 2)
-                            self.save_debug_screenshot(debug_img, f"template_{template_file.replace('.png', '')}_{method}", current_val)
-                        
-                        # Update best match if this one is better
-                        if current_val > best_match_val:
-                            best_match_val = current_val
-                            best_match_loc = current_loc
-                            best_match_template_size = (template.shape[1], template.shape[0])
-                            best_template_name = template_file
+        for template_file in templates:
+            try:
+                template_path = resource_path(f'assets/{template_file}')
+                template = cv2.imread(template_path)
+                if template is None: continue
+                if template.shape[0] > screenshot.shape[0] or template.shape[1] > screenshot.shape[1]: continue
                 
-                except Exception as e:
-                    print(f"[ERROR] Error processing template {template_file}: {str(e)}")
+                result = cv2.matchTemplate(screenshot, template, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(result)
+                
+                if self.ENABLE_DEBUG and max_val < confidence and self.debug_screenshot_count < self.max_debug_screenshots:
+                    debug_img = screenshot.copy()
+                    h, w = template.shape[:2]
+                    cv2.rectangle(debug_img, max_loc, (max_loc[0] + w, max_loc[1] + h), (0, 0, 255), 2)
+                    self.save_debug_screenshot(debug_img, f"template_{template_file.replace('.png', '')}", max_val)
+                
+                if max_val > best_match_val:
+                    best_match_val = max_val
+                    best_match_loc = max_loc
+                    best_match_template_size = (template.shape[1], template.shape[0])
+                    best_template_name = template_file
             
-            if self.ENABLE_DEBUG:
-                if best_match_val > 0: 
-                    print(f"[DEBUG] Best match: {best_template_name} with confidence: {best_match_val:.2f}")
-                else:
-                    print("[DEBUG] No template matched.")
-                    if self.debug_screenshot_count < self.max_debug_screenshots: 
-                        self.save_debug_screenshot(search_img, "no_match", 0.0)
+            except Exception as e:
+                print(f"[ERROR] Error processing template {template_file}: {e}")
         
-        except Exception as e:
-            print(f"[ERROR] Error in template matching: {str(e)}")
-            return (0.0, None, None)
+        if self.ENABLE_DEBUG:
+            if best_match_val > 0: print(f"[DEBUG] Best match: {best_template_name} with confidence: {best_match_val:.2f}")
+            else:
+                print("[DEBUG] No template matched.")
+                if self.debug_screenshot_count < self.max_debug_screenshots: self.save_debug_screenshot(screenshot, "no_match", 0.0)
         
         return (best_match_val, best_match_loc, best_match_template_size) if best_match_val > confidence else (0.0, None, None)
-        
+
     def check_for_spiders(self):
         """Check the spider detection region for spiders.
         
