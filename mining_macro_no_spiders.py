@@ -517,7 +517,9 @@ class MiningMacroNoSpiders:
                         # No rock found, perform one click as per instructions
                         self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: No rock. Performing speculative click."))
                         pyautogui.click(active_click_point)
-                        time.sleep(0.5) # Short pause after click
+                        # Add random variation of ±0.15s to the 0.5s pause (0.35s to 0.65s range)
+                        random_delay = 0.5 + random.uniform(-0.15, 0.15)
+                        time.sleep(max(0.1, random_delay))  # Ensure minimum 0.1s delay
 
                         # Search again
                         screenshot = pyautogui.screenshot(region=active_detection_region)
@@ -534,7 +536,9 @@ class MiningMacroNoSpiders:
                             self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Still no rock. Switching area."))
                             self.current_strategy = 2 if self.current_strategy == 1 else 1
                             phase = 'search' # Stay in search phase for the new area
-                            time.sleep(1.0)
+                            # Add random variation of ±0.075s to the 1.0s pause (0.925s to 1.075s range)
+                            random_switch_delay = 1.0 + random.uniform(-0.075, 0.075)
+                            time.sleep(max(0.5, random_switch_delay))  # Ensure minimum 0.5s delay
                             continue
 
                 # === MINING PHASE (2nd phase) ===
