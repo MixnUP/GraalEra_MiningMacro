@@ -32,8 +32,11 @@ class MiningMacroNoSpiders:
         # State
         self.detection_region_1: Optional[Tuple[int, int, int, int]] = None
         self.detection_region_2: Optional[Tuple[int, int, int, int]] = None
+        self.spider_detection_region: Optional[Tuple[int, int, int, int]] = None
         self.click_point_1: Optional[Tuple[int, int]] = None
         self.click_point_2: Optional[Tuple[int, int]] = None
+        self.spider_attack_point_1: Optional[Tuple[int, int]] = None
+        self.spider_attack_point_2: Optional[Tuple[int, int]] = None
         self.character_point: Optional[Tuple[int, int]] = None
         self.character_marker_id: Optional[int] = None
         self.running: bool = False
@@ -43,10 +46,13 @@ class MiningMacroNoSpiders:
         self.current_strategy: int = 1
         
         self.mined_rock_templates = ['rock_phase_4.png']
+        self.spider_templates = ['spider1.png', 'spider2.png', 'spider3.png']  # Add your spider template image
         
         # Relative offsets from character point
         self.relative_mining_offset_1: Optional[Tuple[int, int]] = None
         self.relative_mining_offset_2: Optional[Tuple[int, int]] = None
+        self.relative_spider_attack_offset_1: Optional[Tuple[int, int]] = None
+        self.relative_spider_attack_offset_2: Optional[Tuple[int, int]] = None
         
         # Detection confidence
         self.detection_confidence_var = tk.StringVar(value="0.5")
@@ -271,6 +277,33 @@ class MiningMacroNoSpiders:
             self.set_click_point(event.x, event.y, 'mining_2')
         elif self.selection_phase == 3: # Detection region 2
             if self.detection_region_2_rect_id is None: self.detection_region_2_start = (event.x, event.y)
+        elif self.selection_phase == 4: # Spider detection region
+            if not hasattr(self, 'spider_detection_region_start'):
+                self.spider_detection_region_start = (event.x, event.y)
+            else:
+                # Create rectangle from start to current point
+                x1, y1 = self.spider_detection_region_start
+                x2, y2 = event.x, event.y
+                if abs(x2 - x1) < 20 or abs(y2 - y1) < 20:
+                    self.status_var.set("Selection too small.")
+                    return
+                self.spider_detection_region = (
+                    min(x1, x2), min(y1, y2),
+                    abs(x2 - x1), abs(y2 - y1)
+                )
+                self.selection_phase = 5
+                self.update_instructions()
+        elif self.selection_phase == 5: # Spider attack points
+            if not hasattr(self, 'spider_attack_point_1') or self.spider_attack_point_1 is None:
+                self.spider_attack_point_1 = (event.x, event.y)
+                self.draw_click_marker(event.x, event.y, 'magenta', 'spider_attack_1')
+                self.status_var.set("First spider attack point set. Click for second point.")
+            elif not hasattr(self, 'spider_attack_point_2') or self.spider_attack_point_2 is None:
+                self.spider_attack_point_2 = (event.x, event.y)
+                self.draw_click_marker(event.x, event.y, 'magenta', 'spider_attack_2')
+                self.status_var.set("Second spider attack point set. Right-click to set character position.")
+                self.selection_phase = 6
+                self.update_instructions()
     
     def on_drag(self, event):
         """Handle mouse drag for region selection."""
@@ -286,6 +319,21 @@ class MiningMacroNoSpiders:
             x2, y2 = event.x, event.y
             if self.detection_region_2_rect_id: self.canvas.coords(self.detection_region_2_rect_id, x1, y1, x2, y2)
             else: self.detection_region_2_rect_id = self.canvas.create_rectangle(x1, y1, x2, y2, outline='lime', fill='green', stipple='gray50', width=2, tags='selection')
+        elif self.selection_phase == 4: # Spider detection region
+            if not hasattr(self, 'spider_detection_region_start'): return
+            x1, y1 = self.spider_detection_region_start
+            x2, y2 = event.x, event.y
+            if hasattr(self, 'spider_detection_rect_id'):
+                self.canvas.coords(self.spider_detection_rect_id, x1, y1, x2, y2)
+            else:
+                self.spider_detection_rect_id = self.canvas.create_rectangle(
+                    x1, y1, x2, y2, 
+                    outline='magenta', 
+                    fill='purple', 
+                    stipple='gray50', 
+                    width=2, 
+                    tags='selection'
+                )
 
     def on_release(self, event):
         """Finalize region selection on mouse release."""
@@ -302,6 +350,21 @@ class MiningMacroNoSpiders:
             if abs(x2 - x1) < 20 or abs(y2 - y1) < 20: self.status_var.set("Selection too small."); return
             self.detection_region_2 = (int(min(x1, x2)), int(min(y1, y2)), int(abs(x2 - x1)), int(abs(y2 - y1)))
             self.selection_phase = 4
+            self.update_instructions()
+        elif self.selection_phase == 4: # Spider detection region
+            if not hasattr(self, 'spider_detection_region_start'): return
+            x1, y1 = self.spider_detection_region_start
+            x2, y2 = event.x, event.y
+            if abs(x2 - x1) < 20 or abs(y2 - y1) < 20: 
+                self.status_var.set("Selection too small.")
+                return
+            self.spider_detection_region = (
+                int(min(x1, x2)), 
+                int(min(y1, y2)), 
+                int(abs(x2 - x1)), 
+                int(abs(y2 - y1))
+            )
+            self.selection_phase = 5
             self.update_instructions()
 
     def set_click_point(self, x, y, point_type):
@@ -331,8 +394,9 @@ class MiningMacroNoSpiders:
 
     def on_right_click(self, event):
         """Handle right-click for character position selection."""
-        if self.selection_phase == 4:
+        if self.selection_phase == 6:  # Phase for setting character position
             self.set_character_point(event.x, event.y)
+            self.status_var.set("Character position set. Press Enter to confirm.")
 
     def set_character_point(self, x, y):
         """Set the character's position."""
@@ -343,57 +407,155 @@ class MiningMacroNoSpiders:
             x - size, y - size, x + size, y + size,
             outline='red', fill='red', stipple='gray25', width=2, tags='character_point'
         )
-        self.selection_phase = 5
+        if hasattr(self, 'spider_attack_point_1') and hasattr(self, 'spider_attack_point_2'):
+            self.selection_phase = 7
+        else:
+            self.selection_phase = 6
         self.update_instructions()
     
     def update_instructions(self):
         """Updates the instruction text on the overlay."""
         instructions = {
-            0: "Phase 1/5: Set Mining Click Point 1.\n\nLeft-click your first mining action location.",
-            1: "Phase 2/5: Select Detection Area 1.\n\nDrag a rectangle over the first rock's appearance area.",
-            2: "Phase 3/5: Set Mining Click Point 2.\n\nLeft-click your second mining action location.",
-            3: "Phase 4/5: Select Detection Area 2.\n\nDrag a rectangle over the second rock's appearance area.",
-            4: "Phase 5/5: Set Character Position.\n\nRight-click on your character's approximate center.",
-            5: "All selections complete!\n\nPress Enter to confirm or Esc to cancel."
+            0: "Phase 1/7: Set Mining Click Point 1.\n\nLeft-click your first mining action location.",
+            1: "Phase 2/7: Select Detection Area 1.\n\nDrag a rectangle over the first rock's appearance area.",
+            2: "Phase 3/7: Set Mining Click Point 2.\n\nLeft-click your second mining action location.",
+            3: "Phase 4/7: Select Detection Area 2.\n\nDrag a rectangle over the second rock's appearance area.",
+            4: "Phase 5/7: Set Spider Detection Area.\n\nDrag a rectangle where spiders can appear.",
+            5: "Phase 6/7: Set Spider Attack Points.\n\nLeft-click two different positions to attack spiders from.",
+            6: "Phase 7/7: Set Character Position.\n\nRight-click on your character's approximate center.",
+            7: "All selections complete!\n\nPress Enter to confirm or Esc to cancel."
         }
-        self.canvas.itemconfig(self.instruction_text, text=instructions.get(self.selection_phase, "Unknown phase."))
+        
+        # Only update if canvas and instruction_text exist
+        if hasattr(self, 'canvas') and hasattr(self, 'instruction_text'):
+            try:
+                self.canvas.itemconfig(self.instruction_text, 
+                                    text=instructions.get(self.selection_phase, "Unknown phase."))
+            except (tk.TclError, AttributeError):
+                # Canvas or text item might be destroyed
+                pass
     
     def confirm_region(self, event=None):
         """Finalize the region and click point selection."""
-        if not all([self.click_point_1, self.detection_region_1, self.click_point_2, self.detection_region_2, self.character_point]):
-            self.status_var.set("Error: All 5 phases must be completed.")
+        # Define required fields and their descriptions
+        required_fields = {
+            'click_point_1': (self.click_point_1, "Mining Click Point 1"),
+            'detection_region_1': (self.detection_region_1, "Detection Area 1"),
+            'click_point_2': (self.click_point_2, "Mining Click Point 2"),
+            'detection_region_2': (self.detection_region_2, "Detection Area 2"),
+            'spider_detection_region': (self.spider_detection_region, "Spider Detection Area"),
+            'spider_attack_point_1': (self.spider_attack_point_1, "Spider Attack Point 1"),
+            'spider_attack_point_2': (self.spider_attack_point_2, "Spider Attack Point 2"),
+            'character_point': (self.character_point, "Character Position")
+        }
+        
+        # Check for missing fields
+        missing_fields = [desc for field, (value, desc) in required_fields.items() if not value]
+        
+        if missing_fields:
+            error_msg = "Missing required selections:\n"
+            error_msg += "\n".join(f"- {field}" for field in missing_fields)
+            self.status_var.set(error_msg)
+            
+            # Move to the first missing phase
+            if not self.click_point_1:
+                self.selection_phase = 0
+            elif not self.detection_region_1:
+                self.selection_phase = 1
+            elif not self.click_point_2:
+                self.selection_phase = 2
+            elif not self.detection_region_2:
+                self.selection_phase = 3
+            elif not self.spider_detection_region:
+                self.selection_phase = 4
+            elif not self.spider_attack_point_1 or not self.spider_attack_point_2:
+                self.selection_phase = 5
+            elif not self.character_point:
+                self.selection_phase = 6
+                
+            self.update_instructions()
             return
             
-        if self.character_point:
-            self.relative_mining_offset_1 = (self.click_point_1[0] - self.character_point[0], self.click_point_1[1] - self.character_point[1])
-            self.relative_mining_offset_2 = (self.click_point_2[0] - self.character_point[0], self.click_point_2[1] - self.character_point[1])
-        else:
-            self.status_var.set("Error: Character point not set.")
+        # If we get here, all required fields are set
+        try:
+            # Calculate mining offsets
+            self.relative_mining_offset_1 = (
+                self.click_point_1[0] - self.character_point[0],
+                self.click_point_1[1] - self.character_point[1]
+            )
+            self.relative_mining_offset_2 = (
+                self.click_point_2[0] - self.character_point[0],
+                self.click_point_2[1] - self.character_point[1]
+            )
+            # Calculate spider attack point offsets
+            self.relative_spider_attack_offset_1 = (
+                self.spider_attack_point_1[0] - self.character_point[0],
+                self.spider_attack_point_1[1] - self.character_point[1]
+            )
+            self.relative_spider_attack_offset_2 = (
+                self.spider_attack_point_2[0] - self.character_point[0],
+                self.spider_attack_point_2[1] - self.character_point[1]
+            )
+        except Exception as e:
+            self.status_var.set(f"Error during setup: {str(e)}")
+            print(f"Error in confirm_region: {e}")
             return
             
+        # Clean up the overlay
         self.cleanup_overlay()
-        self.status_var.set("Ready to start")
+        
+        # Update the status and enable buttons
+        self.status_var.set("Setup complete! Click 'Start Macro' to begin.")
         self.start_btn.config(state=tk.NORMAL)
         self.reset_btn.config(state=tk.NORMAL)
+        
+        # Reset the selection phase for next time
+        self.selection_phase = 0
     
-    def clear_overlay_elements(self):
+    def cleanup_overlay_elements(self):
         """Clear visual elements from the overlay."""
         if hasattr(self, 'canvas') and self.canvas.winfo_exists():
-            for tag in ['selection', 'click_point', 'character_point', 'instruction']:
+            for tag in ['selection', 'click_point', 'character_point', 'instruction', 'spider_attack']:
                 self.canvas.delete(tag)
 
     def reset_selection(self):
         """Reset the current selection and state."""
-        self.clear_overlay_elements()
-        self.selection_phase = 0
+        # First clean up any existing overlay elements if canvas exists
+        if hasattr(self, 'canvas') and self.canvas and self.canvas.winfo_exists():
+            self.cleanup_overlay_elements()
         
-        self.click_point_1, self.click_point_2 = None, None
-        self.detection_region_1, self.detection_region_2 = None, None
+        # Reset all points and regions
+        self.selection_phase = 0
+        self.click_point_1 = None
+        self.click_point_2 = None
+        self.detection_region_1 = None
+        self.detection_region_2 = None
+        self.spider_detection_region = None
+        self.spider_attack_point_1 = None
+        self.spider_attack_point_2 = None
         self.character_point = None
-
-        self.click_marker_ids = []
         self.character_marker_id = None
-        self.detection_region_1_rect_id, self.detection_region_2_rect_id = None, None
+        
+        # Reset relative offsets
+        self.relative_mining_offset_1 = None
+        self.relative_mining_offset_2 = None
+        self.relative_spider_attack_offset_1 = None
+        self.relative_spider_attack_offset_2 = None
+        
+        # Recreate instruction text if canvas exists
+        if hasattr(self, 'canvas') and self.canvas and self.canvas.winfo_exists():
+            try:
+                self.canvas.delete('all')
+                self.instruction_text = self.canvas.create_text(
+                    10, 10, anchor='nw', 
+                    text="Phase 1/7: Set Mining Click Point 1.\n\nLeft-click your first mining action location.",
+                    fill='white', font=('Arial', 12), width=300, tags='instruction'
+                )
+            except (tk.TclError, AttributeError):
+                # Canvas might be destroyed during cleanup
+                pass
+        
+        self.update_instructions()
         
         self.status_var.set("Ready")
         self.start_btn.config(state=tk.DISABLED)
@@ -409,13 +571,28 @@ class MiningMacroNoSpiders:
         self.reset_selection()
 
     def cleanup_overlay(self):
-        """Clean up the overlay window."""
+        """Clean up the overlay window and related attributes."""
+        # First clean up any canvas elements
+        if hasattr(self, 'canvas') and self.canvas and self.canvas.winfo_exists():
+            try:
+                self.cleanup_overlay_elements()
+                self.canvas.destroy()
+            except (tk.TclError, AttributeError):
+                pass
+        
+        # Then destroy the overlay window
         if hasattr(self, 'overlay') and self.overlay:
             try:
-                self.overlay.grab_release()
                 self.overlay.destroy()
-            except tk.TclError: pass
+            except tk.TclError:
+                pass
             self.overlay = None
+            
+        # Clean up any remaining references
+        if hasattr(self, 'canvas'):
+            del self.canvas
+        if hasattr(self, 'instruction_text'):
+            del self.instruction_text
 
     def start_macro(self):
         """Start the mining macro."""
@@ -440,45 +617,284 @@ class MiningMacroNoSpiders:
         self.reset_btn.config(state=tk.NORMAL)
         self.status_var.set("Stopped")
 
-    def detect_any_template(self, screenshot, templates, confidence=0.7):
-        """Detect if any template matches in the screenshot."""
+    def detect_any_template(self, screenshot, templates, confidence=0.7, region=None):
+        """Detect if any template matches in the screenshot.
+        
+        Args:
+            screenshot: The screenshot to search in (numpy array)
+            templates: List of template filenames to search for
+            confidence: Minimum confidence threshold (0.0 to 1.0)
+            region: Optional (x, y, w, h) tuple to search within a specific region of the screenshot
+            
+        Returns:
+            tuple: (confidence, location, template_size) if found, (0.0, None, None) otherwise
+        """
         best_match_val = 0.0
         best_match_loc = None
         best_match_template_size = None
         best_template_name = None
         
-        for template_file in templates:
-            try:
-                template_path = resource_path(f'assets/{template_file}')
-                template = cv2.imread(template_path)
-                if template is None: continue
-                if template.shape[0] > screenshot.shape[0] or template.shape[1] > screenshot.shape[1]: continue
-                
-                result = cv2.matchTemplate(screenshot, template, cv2.TM_CCOEFF_NORMED)
-                _, max_val, _, max_loc = cv2.minMaxLoc(result)
-                
-                if self.ENABLE_DEBUG and max_val < confidence and self.debug_screenshot_count < self.max_debug_screenshots:
-                    debug_img = screenshot.copy()
-                    h, w = template.shape[:2]
-                    cv2.rectangle(debug_img, max_loc, (max_loc[0] + w, max_loc[1] + h), (0, 0, 255), 2)
-                    self.save_debug_screenshot(debug_img, f"template_{template_file.replace('.png', '')}", max_val)
-                
-                if max_val > best_match_val:
-                    best_match_val = max_val
-                    best_match_loc = max_loc
-                    best_match_template_size = (template.shape[1], template.shape[0])
-                    best_template_name = template_file
+        # If region is specified, crop the screenshot to that region
+        try:
+            search_img = screenshot
+            if region is not None:
+                x, y, w, h = region
+                if x < 0 or y < 0 or w <= 0 or h <= 0:
+                    print(f"[WARN] Invalid region: {region}")
+                    return (0.0, None, None)
+                search_img = screenshot[y:y+h, x:x+w]
+                if search_img.size == 0:
+                    print(f"[WARN] Empty search image after region crop: {region}")
+                    return (0.0, None, None)
             
-            except Exception as e:
-                print(f"[ERROR] Error processing template {template_file}: {e}")
+            for template_file in templates:
+                try:
+                    template_path = resource_path(f'assets/{template_file}')
+                    if not os.path.exists(template_path):
+                        print(f"[WARN] Template not found: {template_path}")
+                        continue
+                        
+                    template = cv2.imread(template_path, cv2.IMREAD_COLOR)
+                    if template is None:
+                        print(f"[WARN] Failed to load template: {template_file}")
+                        continue
+                        
+                    # Check if template is larger than search image
+                    if template.shape[0] > search_img.shape[0] or template.shape[1] > search_img.shape[1]:
+                        print(f"[WARN] Template {template_file} is larger than search area")
+                        continue
+                    
+                    # Convert both images to grayscale for better matching
+                    search_gray = cv2.cvtColor(search_img, cv2.COLOR_BGR2GRAY)
+                    template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+                    
+                    # Try multiple template matching methods
+                    methods = [cv2.TM_CCOEFF_NORMED, cv2.TM_CCORR_NORMED, cv2.TM_SQDIFF_NORMED]
+                    
+                    for method in methods:
+                        result = cv2.matchTemplate(search_gray, template_gray, method)
+                        
+                        # For SQDIFF, we want the minimum value (best match)
+                        if method in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
+                            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+                            current_val = 1.0 - min_val  # Convert to similarity score
+                            current_loc = min_loc
+                        else:
+                            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+                            current_val = max_val
+                            current_loc = max_loc
+                        
+                        # Adjust the match location if we're searching in a region
+                        if region is not None:
+                            current_loc = (current_loc[0] + region[0], current_loc[1] + region[1])
+                        
+                        # Debug visualization
+                        if self.ENABLE_DEBUG and current_val > best_match_val and self.debug_screenshot_count < self.max_debug_screenshots:
+                            debug_img = search_img.copy()
+                            h, w = template.shape[:2]
+                            top_left = (current_loc[0] - (region[0] if region else 0), 
+                                      current_loc[1] - (region[1] if region else 0))
+                            bottom_right = (top_left[0] + w, top_left[1] + h)
+                            cv2.rectangle(debug_img, top_left, bottom_right, (0, 0, 255), 2)
+                            self.save_debug_screenshot(debug_img, f"template_{template_file.replace('.png', '')}_{method}", current_val)
+                        
+                        # Update best match if this one is better
+                        if current_val > best_match_val:
+                            best_match_val = current_val
+                            best_match_loc = current_loc
+                            best_match_template_size = (template.shape[1], template.shape[0])
+                            best_template_name = template_file
+                
+                except Exception as e:
+                    print(f"[ERROR] Error processing template {template_file}: {str(e)}")
+            
+            if self.ENABLE_DEBUG:
+                if best_match_val > 0: 
+                    print(f"[DEBUG] Best match: {best_template_name} with confidence: {best_match_val:.2f}")
+                else:
+                    print("[DEBUG] No template matched.")
+                    if self.debug_screenshot_count < self.max_debug_screenshots: 
+                        self.save_debug_screenshot(search_img, "no_match", 0.0)
         
-        if self.ENABLE_DEBUG:
-            if best_match_val > 0: print(f"[DEBUG] Best match: {best_template_name} with confidence: {best_match_val:.2f}")
-            else:
-                print("[DEBUG] No template matched.")
-                if self.debug_screenshot_count < self.max_debug_screenshots: self.save_debug_screenshot(screenshot, "no_match", 0.0)
+        except Exception as e:
+            print(f"[ERROR] Error in template matching: {str(e)}")
+            return (0.0, None, None)
         
         return (best_match_val, best_match_loc, best_match_template_size) if best_match_val > confidence else (0.0, None, None)
+        
+    def check_for_spiders(self):
+        """Check the spider detection region for spiders.
+        
+        Returns:
+            tuple: (x, y) coordinates of the detected spider center, or None if no spider found
+        """
+        if not hasattr(self, 'spider_detection_enabled') or not self.spider_detection_enabled:
+            return None
+            
+        if not self.spider_detection_region:
+            if self.ENABLE_DEBUG:
+                print("[DEBUG] No spider detection region set")
+            return None
+            
+        # Take a screenshot of the spider detection region
+        try:
+            # Add some padding to the region to avoid edge effects
+            padding = 20
+            x, y, w, h = self.spider_detection_region
+            x = max(0, x - padding)
+            y = max(0, y - padding)
+            w = min(pyautogui.size().width - x, w + 2 * padding)
+            h = min(pyautogui.size().height - y, h + 2 * padding)
+            
+            if w <= 0 or h <= 0:
+                print(f"[WARN] Invalid spider detection region after padding: {self.spider_detection_region}")
+                return None
+                
+            screenshot = pyautogui.screenshot(region=(x, y, w, h))
+            screenshot_cv = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+            
+            if screenshot_cv is None or screenshot_cv.size == 0:
+                print("[WARN] Failed to capture screenshot for spider detection")
+                return None
+            
+            # Look for spiders in the detection region
+            spider_conf, spider_loc, spider_size = self.detect_any_template(
+                screenshot_cv, 
+                self.spider_templates, 
+                confidence=max(0.1, self.detection_confidence * 0.7)  # Lower confidence threshold for spiders
+            )
+            
+            if self.ENABLE_DEBUG:
+                print(f"[DEBUG] Spider detection - Confidence: {spider_conf:.2f}, Location: {spider_loc}, Size: {spider_size}")
+            
+            if spider_conf > 0 and spider_loc is not None and spider_size is not None:
+                # Convert local coordinates to screen coordinates
+                spider_x = x + spider_loc[0] + (spider_size[0] // 2)
+                spider_y = y + spider_loc[1] + (spider_size[1] // 2)
+                
+                if self.ENABLE_DEBUG:
+                    print(f"[DEBUG] Spider detected at screen coordinates: ({spider_x}, {spider_y})")
+                    
+                return (spider_x, spider_y)
+                
+        except Exception as e:
+            error_msg = f"Error checking for spiders: {str(e)}"
+            print(f"[ERROR] {error_msg}")
+            # If we get an error, disable spider detection for this session
+            self.spider_detection_enabled = False
+            self.status_var.set("Spider detection disabled due to error")
+            
+        return None
+
+    def get_best_attack_point(self, spider_pos):
+        """Determine the best attack point based on spider position.
+        
+        Args:
+            spider_pos: (x, y) coordinates of the spider
+            
+        Returns:
+            tuple: (x, y) coordinates of the best attack point, or None if not available
+        """
+        if not all([self.character_point, self.spider_attack_point_1, self.spider_attack_point_2]):
+            return None
+            
+        # Calculate vectors from character to spider and attack points
+        char_x, char_y = self.character_point
+        spider_x, spider_y = spider_pos
+        
+        # Calculate vector from character to spider
+        dx = spider_x - char_x
+        dy = spider_y - char_y
+        
+        # Calculate distances to each attack point
+        def distance_sq(p1, p2):
+            return (p1[0] - p2[0])**2 + (p1[1] - p2[1])**2
+            
+        # Get the attack point that's in the opposite direction from the spider
+        attack_point_1 = self.spider_attack_point_1
+        attack_point_2 = self.spider_attack_point_2
+        
+        # Calculate dot products to find which attack point is more opposite to the spider
+        def dot_product(a, b):
+            return a[0]*b[0] + a[1]*b[1]
+            
+        # Vectors from character to attack points
+        vec1 = (attack_point_1[0] - char_x, attack_point_1[1] - char_y)
+        vec2 = (attack_point_2[0] - char_x, attack_point_2[1] - char_y)
+        spider_vec = (dx, dy)
+        
+        # The attack point with the most negative dot product is more opposite to the spider
+        dot1 = dot_product(spider_vec, vec1)
+        dot2 = dot_product(spider_vec, vec2)
+        
+        return attack_point_1 if dot1 < dot2 else attack_point_2
+        
+    def attack_spider(self, initial_spider_pos):
+        """Execute the spider attack sequence with continuous attacks.
+        
+        Args:
+            initial_spider_pos: (x, y) coordinates of the spider when first detected
+            
+        Returns:
+            bool: True if attack sequence was completed, False if aborted due to error
+        """
+        if not self.character_point:
+            return False
+            
+        # Find the best attack point
+        attack_point = self.get_best_attack_point(initial_spider_pos)
+        if not attack_point:
+            return False
+            
+        max_attempts = 10  # Maximum number of attack attempts
+        attempts = 0
+        spider_detected = True
+        
+        try:
+            self.root.after(0, lambda: self.status_var.set("Spider detected! Attacking..."))
+            
+            # Initial move to attack point
+            pyautogui.moveTo(attack_point[0], attack_point[1], duration=0.2)
+            time.sleep(0.1)
+            
+            # Attack loop
+            while self.running and spider_detected and attempts < max_attempts:
+                # Perform attack
+                pyautogui.click(button='left')
+                attempts += 1
+                
+                # Small delay between attacks
+                time.sleep(0.2)
+                
+                # Check if spider is still there
+                current_spider_pos = self.check_for_spiders()
+                spider_detected = current_spider_pos is not None
+                
+                # If spider moved, update attack point
+                if spider_detected:
+                    attack_point = self.get_best_attack_point(current_spider_pos)
+                    if attack_point:
+                        pyautogui.moveTo(attack_point[0], attack_point[1], duration=0.1)
+            
+            # Return to character position after finishing
+            pyautogui.moveTo(self.character_point[0], self.character_point[1], duration=0.2)
+            
+            if not spider_detected:
+                self.root.after(0, lambda: self.status_var.set("Spider defeated!"))
+                time.sleep(0.5)  # Small delay before resuming mining
+            elif attempts >= max_attempts:
+                self.root.after(0, lambda: self.status_var.set("Max attack attempts reached"))
+            
+            return True
+            
+        except Exception as e:
+            print(f"[ERROR] Error during spider attack: {e}")
+            try:
+                # Try to return to character position even if there was an error
+                pyautogui.moveTo(self.character_point[0], self.character_point[1], duration=0.2)
+            except:
+                pass
+            return False
 
     def run_macro(self):
         """Main macro loop based on the new flow.md logic."""
@@ -566,8 +982,18 @@ class MiningMacroNoSpiders:
                     depleted_conf, _, _ = self.detect_any_template(screenshot_cv, self.mined_rock_templates, confidence=self.detection_confidence)
 
                     if depleted_conf > 0:
-                        # Rock is mined, switch to next detection region
-                        self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Area depleted. Switching."))
+                        # Rock is mined, check for spiders before switching areas
+                        self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Area depleted. Checking for spiders..."))
+                        
+                        # Check for spiders and attack if found
+                        spider_pos = self.check_for_spiders()
+                        if spider_pos and self.spider_attack_point_1 and self.spider_attack_point_2:
+                            self.attack_spider(spider_pos)
+                            # After handling spider, give a moment before continuing
+                            time.sleep(0.5)
+                        
+                        # Now switch to next detection region
+                        self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Switching to next area."))
                         self.current_strategy = 2 if self.current_strategy == 1 else 1
                         phase = 'search' # Go back to searching in the new area
                         time.sleep(self.area_switch_timeout)
