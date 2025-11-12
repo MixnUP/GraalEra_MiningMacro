@@ -59,6 +59,10 @@ class MiningMacroNoSpiders:
         self.debug_screenshot_dir = "debug_screenshots"
         if self.ENABLE_DEBUG:
             self.setup_debug_dir()
+            
+        # Timeout settings (in seconds)
+        self.area_switch_timeout = 5.0  # Time to wait when switching areas
+        self.mining_retry_timeout = 2.0  # Time to wait between mining attempts
         
         self.create_ui()
         self._check_assets_loaded()
@@ -138,14 +142,35 @@ class MiningMacroNoSpiders:
         self.reset_btn = ttk.Button(btn_frame, text="Reset Selection", command=self.setup_region, width=15, state=tk.DISABLED)
         self.reset_btn.pack(side=tk.LEFT, padx=2)
         
+        # Confidence frame
         confidence_frame = ttk.Frame(self.frame)
         confidence_frame.pack(fill=tk.X, pady=(5, 0))
 
         ttk.Label(confidence_frame, text="Detection Confidence:").pack(side=tk.LEFT, padx=(0, 5))
         self.confidence_entry = ttk.Entry(confidence_frame, textvariable=self.detection_confidence_var, width=5)
-        self.confidence_entry.pack(side=tk.LEFT, padx=(0, 5))
+        self.confidence_entry.pack(side=tk.LEFT, padx=(0, 10))
         self.confidence_entry.bind("<FocusOut>", self._validate_detection_confidence)
         self.confidence_entry.bind("<Return>", self._validate_detection_confidence)
+        
+        # Timeout settings frame
+        timeout_frame = ttk.Frame(self.frame)
+        timeout_frame.pack(fill=tk.X, pady=(5, 0))
+        
+        # Area switch timeout
+        ttk.Label(timeout_frame, text="Area Switch (s):").pack(side=tk.LEFT, padx=(0, 5))
+        self.area_switch_var = tk.StringVar(value="5.0")
+        self.area_switch_entry = ttk.Entry(timeout_frame, textvariable=self.area_switch_var, width=5)
+        self.area_switch_entry.pack(side=tk.LEFT, padx=(0, 10))
+        self.area_switch_entry.bind("<FocusOut>", self._validate_timeout_values)
+        self.area_switch_entry.bind("<Return>", self._validate_timeout_values)
+        
+        # Mining retry timeout
+        ttk.Label(timeout_frame, text="Mining Retry (s):").pack(side=tk.LEFT, padx=(0, 5))
+        self.mining_retry_var = tk.StringVar(value="2.0")
+        self.mining_retry_entry = ttk.Entry(timeout_frame, textvariable=self.mining_retry_var, width=5)
+        self.mining_retry_entry.pack(side=tk.LEFT)
+        self.mining_retry_entry.bind("<FocusOut>", self._validate_timeout_values)
+        self.mining_retry_entry.bind("<Return>", self._validate_timeout_values)
         
         self.status_var = tk.StringVar(value="Ready")
         status = ttk.Label(self.frame, textvariable=self.status_var, font=('TkDefaultFont', 10, 'bold'), foreground='blue')
@@ -172,6 +197,28 @@ class MiningMacroNoSpiders:
         except ValueError:
             self.detection_confidence_var.set(f"{self.detection_confidence:.2f}")
             self.status_var.set("Invalid confidence. Must be 0.0-1.0.")
+    
+    def _validate_timeout_values(self, event=None):
+        """Validate and update the timeout values."""
+        try:
+            # Validate area switch timeout
+            area_switch = float(self.area_switch_var.get())
+            if area_switch < 0.1:
+                raise ValueError("Area switch timeout must be at least 0.1 seconds.")
+            self.area_switch_timeout = area_switch
+            
+            # Validate mining retry timeout
+            mining_retry = float(self.mining_retry_var.get())
+            if mining_retry < 0.1:
+                raise ValueError("Mining retry timeout must be at least 0.1 seconds.")
+            self.mining_retry_timeout = mining_retry
+            
+            self.status_var.set(f"Timeouts updated: Switch={self.area_switch_timeout:.1f}s, Retry={self.mining_retry_timeout:.1f}s")
+        except ValueError as e:
+            # Reset to last valid values
+            self.area_switch_var.set(f"{self.area_switch_timeout:.1f}")
+            self.mining_retry_var.set(f"{self.mining_retry_timeout:.1f}")
+            self.status_var.set(f"Invalid timeout: {str(e)}")
 
     def setup_region(self):
         """Open an overlay to select screen regions."""
@@ -519,12 +566,12 @@ class MiningMacroNoSpiders:
                         self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Area depleted. Switching."))
                         self.current_strategy = 2 if self.current_strategy == 1 else 1
                         phase = 'search' # Go back to searching in the new area
-                        time.sleep(5.0)
+                        time.sleep(self.area_switch_timeout)
                         continue
                     else:
-                        # Rock not depleted, wait 2 seconds and repeat mining phase
+                        # Rock not depleted, wait and repeat mining phase
                         self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Not depleted. Waiting to mine again."))
-                        time.sleep(2.0)
+                        time.sleep(self.mining_retry_timeout)
                         # The loop will continue, and since phase is still 'mining', it will re-run this block.
                         continue
 
