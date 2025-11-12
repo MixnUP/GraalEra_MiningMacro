@@ -45,8 +45,13 @@ class MiningMacroNoSpiders:
         self.confidence_var = tk.StringVar(value="Confidence: N/A")
         self.current_strategy: int = 1
         
+        # Direction switching state
+        self.last_direction = None
+        self.direction_switches = 0
+        self.direction_switches_var = tk.StringVar(value="Direction Switches: 0")
+        
         self.mined_rock_templates = ['rock_phase_4.png']
-        self.spider_templates = ['spider1.png', 'spider2.png', 'spider3.png']  # Add your spider template image
+        self.spider_templates = ['spider1.png', 'spider2.png', 'spider3.png', 'spider4.png']  # Add your spider template image
         
         # Relative offsets from character point
         self.relative_mining_offset_1: Optional[Tuple[int, int]] = None
@@ -186,7 +191,11 @@ class MiningMacroNoSpiders:
         self.asset_status_label.pack(pady=(0, 5))
 
         confidence_label = ttk.Label(self.frame, textvariable=self.confidence_var, font=('TkDefaultFont', 9), foreground='purple')
-        confidence_label.pack(pady=(0, 5))
+        confidence_label.pack(pady=(0, 2))
+        
+        # Add direction switches counter display
+        direction_label = ttk.Label(self.frame, textvariable=self.direction_switches_var, font=('TkDefaultFont', 9), foreground='orange')
+        direction_label.pack(pady=(0, 5))
         
         self.setup_region()
         self.start_btn.config(state=tk.DISABLED)
@@ -616,6 +625,11 @@ class MiningMacroNoSpiders:
         self.stop_btn.config(state=tk.DISABLED)
         self.reset_btn.config(state=tk.NORMAL)
         self.status_var.set("Stopped")
+        
+        # Reset direction tracking when stopping
+        self.last_direction = None
+        self.direction_switches = 0
+        self.direction_switches_var.set("Direction Switches: 0")
 
     def detect_any_template(self, screenshot, templates, confidence=0.7):
         """Detect if any template matches in the screenshot."""
@@ -696,7 +710,7 @@ class MiningMacroNoSpiders:
             spider_conf, spider_loc, spider_size = self.detect_any_template(
                 screenshot_cv, 
                 self.spider_templates, 
-                confidence=max(0.1, self.detection_confidence * 0.7)  # Lower confidence threshold for spiders
+                confidence=max(0.1, self.detection_confidence * 0.6)  # Lower confidence threshold for spiders
             )
             
             if self.ENABLE_DEBUG:
@@ -885,8 +899,24 @@ class MiningMacroNoSpiders:
                         else:
                             # Still no rock, switch to the next area
                             self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Still no rock. Switching area."))
-                            self.current_strategy = 2 if self.current_strategy == 1 else 1
+                            
+                            # Track direction switches
+                            new_direction = 2 if self.current_strategy == 1 else 1
+                            if self.last_direction is not None and self.last_direction != new_direction:
+                                self.direction_switches += 1
+                                self.root.after(0, lambda: self.direction_switches_var.set(f"Direction Switches: {self.direction_switches}"))
+                                
+                                # If we've switched directions twice, wait for the mining delay
+                                if self.direction_switches >= 2:
+                                    self.root.after(0, lambda: self.status_var.set("Waiting mining delay before continuing..."))
+                                    time.sleep(self.mining_retry_timeout)
+                                    self.direction_switches = 0  # Reset counter after delay
+                                    self.root.after(0, lambda: self.direction_switches_var.set("Direction Switches: 0"))
+                            
+                            self.last_direction = self.current_strategy
+                            self.current_strategy = new_direction
                             phase = 'search' # Stay in search phase for the new area
+                            
                             # Add random variation of ±0.075s to the 1.0s pause (0.925s to 1.075s range)
                             random_switch_delay = 1.0 + random.uniform(-0.075, 0.075)
                             time.sleep(max(0.5, random_switch_delay))  # Ensure minimum 0.5s delay
