@@ -42,7 +42,7 @@ class MiningMacroNoSpiders:
         self.confidence_var = tk.StringVar(value="Confidence: N/A")
         self.current_strategy: int = 1
         
-        self.mined_rock_templates = ['rock_phase_4.png', 'rock_phase_4_2.png']
+        self.mined_rock_templates = ['rock_phase_4.png']
         
         # Relative offsets from character point
         self.relative_mining_offset_1: Optional[Tuple[int, int]] = None
@@ -91,7 +91,7 @@ class MiningMacroNoSpiders:
         """Verify that all required asset images can be loaded."""
         required_assets = [
             'rock_phase_1.png', 'rock_phase_2.png', 'rock_phase_3.png', 
-            'rock_phase_3_2.png', 'rock_phase_3_3.png', 'rock_phase_4.png', 'rock_phase_4_2.png'
+            'rock_phase_4.png'
         ]
         
         all_loaded = True
@@ -434,11 +434,12 @@ class MiningMacroNoSpiders:
         return (best_match_val, best_match_loc, best_match_template_size) if best_match_val > confidence else (0.0, None, None)
 
     def run_macro(self):
-        """Main macro loop with constant detection."""
-        rock_phases = ['rock_phase_1.png', 'rock_phase_2.png', 'rock_phase_3.png', 'rock_phase_3_2.png', 'rock_phase_3_3.png']
+        """Main macro loop based on the new flow.md logic."""
+        rock_phases = ['rock_phase_1.png', 'rock_phase_2.png', 'rock_phase_3.png']
         
         self.current_strategy = 1
-        
+        phase = 'search' # Can be 'search' or 'mining'
+
         while self.running:
             try:
                 # 1. Determine current strategy
@@ -449,73 +450,83 @@ class MiningMacroNoSpiders:
                     active_detection_region, active_click_point, strategy_name = \
                         self.detection_region_2, self.click_point_2, "Area 2"
 
-                self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Checking area..."))
+                # Take a screenshot of the active area
                 screenshot = pyautogui.screenshot(region=active_detection_region)
                 screenshot_cv = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
 
-                # 2. PRIORITY 1: Check for a depleted rock (phase 4) to trigger an immediate switch
-                depleted_conf, _, _ = self.detect_any_template(screenshot_cv, self.mined_rock_templates, confidence=self.detection_confidence)
-                if depleted_conf > 0:
-                    self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Area depleted. Switching."))
-                    self.current_strategy = 2 if self.current_strategy == 1 else 1
-                    time.sleep(0.5)
-                    continue
-
-                # 3. PRIORITY 2: If not depleted, search for a minable rock up to 3 times
-                rock_found = False
-                for i in range(3):
-                    if not self.running: break
-                    self.root.after(0, lambda s=strategy_name, c=i+1: self.status_var.set(f"{s}: Searching... ({c}/3)"))
+                # === SEARCH PHASE (1st phase) ===
+                if phase == 'search':
+                    self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Searching for rock..."))
                     
+                    rock_found_conf, _, _ = self.detect_any_template(screenshot_cv, rock_phases, confidence=self.detection_confidence)
+                    
+                    if rock_found_conf > 0:
+                        # Rock found, switch to mining phase
+                        phase = 'mining'
+                        self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Rock found. Starting to mine."))
+                        self.root.after(0, lambda conf=rock_found_conf: self.confidence_var.set(f"Minable Rock Confidence: {conf:.2f}"))
+                        continue
+                    else:
+                        # No rock found, perform one click as per instructions
+                        self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: No rock. Performing speculative click."))
+                        pyautogui.click(active_click_point)
+                        time.sleep(0.5) # Short pause after click
+
+                        # Search again
+                        screenshot = pyautogui.screenshot(region=active_detection_region)
+                        screenshot_cv = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+                        rock_found_conf, _, _ = self.detect_any_template(screenshot_cv, rock_phases, confidence=self.detection_confidence)
+
+                        if rock_found_conf > 0:
+                            # Rock appeared after the click, switch to mining
+                            phase = 'mining'
+                            self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Rock appeared. Mining."))
+                            continue
+                        else:
+                            # Still no rock, switch to the next area
+                            self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Still no rock. Switching area."))
+                            self.current_strategy = 2 if self.current_strategy == 1 else 1
+                            phase = 'search' # Stay in search phase for the new area
+                            time.sleep(1.0)
+                            continue
+
+                # === MINING PHASE (2nd phase) ===
+                elif phase == 'mining':
+                    # Check for minable rocks first (safety check from flow.md)
+                    rock_found_conf, _, _ = self.detect_any_template(screenshot_cv, rock_phases, confidence=self.detection_confidence)
+                    if rock_found_conf == 0:
+                        # Rock disappeared, go back to search phase
+                        self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Rock gone. Searching."))
+                        phase = 'search'
+                        continue
+                    self.root.after(0, lambda conf=rock_found_conf: self.confidence_var.set(f"Minable Rock Confidence: {conf:.2f}"))
+
+                    # Perform mining action
+                    self.root.after(0, lambda s=strategy_name: self.status_var.set(f"Mining at {s}..."))
+                    pyautogui.click(active_click_point)
+                    
+                    # Short pause to let game state update before checking for depletion
+                    time.sleep(0.5) 
+                    if not self.running: break
+
+                    # Check if rock is depleted
                     screenshot = pyautogui.screenshot(region=active_detection_region)
                     screenshot_cv = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
-                    rock_found_conf, _, _ = self.detect_any_template(screenshot_cv, rock_phases, confidence=self.detection_confidence)
+                    depleted_conf, _, _ = self.detect_any_template(screenshot_cv, self.mined_rock_templates, confidence=self.detection_confidence)
 
-                    if rock_found_conf > 0:
-                        rock_found = True
-                        break
-                    
-                    time.sleep(0.5) # Wait between failed checks
-
-                # 4. Act based on the search result
-                if rock_found:
-                    self.root.after(0, lambda s=strategy_name: self.status_var.set(f"Mining at {s}..."))
-                    # === REALTIME MINING SUB-LOOP with safety break ===
-                    max_mine_attempts = 3
-                    for attempt in range(max_mine_attempts):
-                        if not self.running: break
-
-                        pyautogui.click(active_click_point)
-                        
-                        # Update status to show mining attempt
-                        self.root.after(0, lambda c=attempt + 1: self.status_var.set(f"Mining... (attempt {c}/{max_mine_attempts})"))
-                        time.sleep(1.0)
-
-                        # Check if the rock is now depleted
-                        mine_check_shot = pyautogui.screenshot(region=active_detection_region)
-                        mine_check_cv = cv2.cvtColor(np.array(mine_check_shot), cv2.COLOR_RGB2BGR)
-                        depleted_conf, _, _ = self.detect_any_template(mine_check_cv, self.mined_rock_templates, confidence=self.detection_confidence)
-                        
-                        # Update confidence score in UI
-                        self.root.after(0, lambda conf=depleted_conf: self.confidence_var.set(f"Depleted Confidence: {conf:.2f}"))
-
-                        if depleted_conf > 0:
-                            self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s} depleted. Switching."))
-                            break
-                    else: # This runs if the for loop completes without a break
-                        self.root.after(0, lambda: self.status_var.set("Mining timeout. Switching anyway."))
-                    # === END MINING SUB-LOOP ===
-
-                    # After mining (successful or timeout), switch area and continue main loop
-                    self.current_strategy = 2 if self.current_strategy == 1 else 1
-                    time.sleep(0.5)
-                    continue
-                
-                else: # Rock not found after 3 checks
-                    self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Not found. Switching area."))
-                    self.current_strategy = 2 if self.current_strategy == 1 else 1
-                    time.sleep(1.0) # Longer pause after a total failure
-                    continue
+                    if depleted_conf > 0:
+                        # Rock is mined, switch to next detection region
+                        self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Area depleted. Switching."))
+                        self.current_strategy = 2 if self.current_strategy == 1 else 1
+                        phase = 'search' # Go back to searching in the new area
+                        time.sleep(5.0)
+                        continue
+                    else:
+                        # Rock not depleted, wait 2 seconds and repeat mining phase
+                        self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Not depleted. Waiting to mine again."))
+                        time.sleep(2.0)
+                        # The loop will continue, and since phase is still 'mining', it will re-run this block.
+                        continue
 
             except Exception as e:
                 print(f"Error in macro: {e}")
