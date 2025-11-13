@@ -748,10 +748,9 @@ class MiningMacroNoSpiders:
         self.reset_btn.config(state=tk.DISABLED)
         self.status_var.set("Running...")
         
-        # Initialize counters and stopwatch
+        # Initialize stopwatch and update UI
         self.session_start_time = time.time()
-        self.rock_counter = 0
-        self.rock_counter_var.set("Rocks Mined: 0")
+        self.rock_counter_var.set(f"Rocks Mined: {self.rock_counter}")
         self.update_stopwatch()
         
         # Initialize direction tracking
