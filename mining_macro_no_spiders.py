@@ -33,6 +33,7 @@ class MiningMacroNoSpiders:
         self.detection_region_1: Optional[Tuple[int, int, int, int]] = None
         self.detection_region_2: Optional[Tuple[int, int, int, int]] = None
         self.spider_detection_region: Optional[Tuple[int, int, int, int]] = None
+        self.fire_detection_region: Optional[Tuple[int, int, int, int]] = None
         self.click_point_1: Optional[Tuple[int, int]] = None
         self.click_point_2: Optional[Tuple[int, int]] = None
         self.spider_attack_point_1: Optional[Tuple[int, int]] = None
@@ -51,7 +52,12 @@ class MiningMacroNoSpiders:
         self.direction_switches_var = tk.StringVar(value="Direction Switches: 0")
         
         self.mined_rock_templates = ['rock_phase_4.png']
-        self.spider_templates = ['spider1.png', 'spider2.png', 'spider3.png', 'spider4.png']  # Add your spider template image
+        # Spider templates including the new leg assets for better detection
+        self.spider_templates = [
+            'spider1.png', 'spider2.png', 'spider3.png', 'spider4.png',
+            'spider1_legs_1.png', 'spider1_legs_2.png',
+            'spider4_legs_1.png', 'spider4_legs_2.png'
+        ]  # Spider templates including leg variations
         
         # Relative offsets from character point
         self.relative_mining_offset_1: Optional[Tuple[int, int]] = None
@@ -247,7 +253,7 @@ class MiningMacroNoSpiders:
         self.canvas = tk.Canvas(self.overlay, highlightthickness=0, cursor='cross', bg='black', bd=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
         
-        self.selection_phase = 0 # 0: click_1, 1: region_1, 2: click_2, 3: region_2, 4: character
+        self.selection_phase = 0 # 0: click_1, 1: region_1, 2: click_2, 3: region_2, 4: spider_region, 5: spider_attack, 6: character, 7: fire_region
         
         self.detection_region_1_start = None
         self.detection_region_1_rect_id = None
@@ -313,6 +319,22 @@ class MiningMacroNoSpiders:
                 self.status_var.set("Second spider attack point set. Right-click to set character position.")
                 self.selection_phase = 6
                 self.update_instructions()
+        elif self.selection_phase == 7: # Fire detection region
+            if not hasattr(self, 'fire_detection_region_start'):
+                self.fire_detection_region_start = (event.x, event.y)
+            else:
+                # Create rectangle from start to current point
+                x1, y1 = self.fire_detection_region_start
+                x2, y2 = event.x, event.y
+                if abs(x2 - x1) < 20 or abs(y2 - y1) < 20:
+                    self.status_var.set("Selection too small.")
+                    return
+                self.fire_detection_region = (
+                    min(x1, x2), min(y1, y2),
+                    abs(x2 - x1), abs(y2 - y1)
+                )
+                self.selection_phase = 8
+                self.update_instructions()
     
     def on_drag(self, event):
         """Handle mouse drag for region selection."""
@@ -341,6 +363,21 @@ class MiningMacroNoSpiders:
                     fill='purple', 
                     stipple='gray50', 
                     width=2, 
+                    tags='selection'
+                )
+        elif self.selection_phase == 7: # Fire detection region
+            if not hasattr(self, 'fire_detection_region_start'): return
+            x1, y1 = self.fire_detection_region_start
+            x2, y2 = event.x, event.y
+            if hasattr(self, 'fire_detection_rect_id'):
+                self.canvas.coords(self.fire_detection_rect_id, x1, y1, x2, y2)
+            else:
+                self.fire_detection_rect_id = self.canvas.create_rectangle(
+                    x1, y1, x2, y2,
+                    outline='red',
+                    fill='dark red',
+                    stipple='gray50',
+                    width=2,
                     tags='selection'
                 )
 
@@ -374,6 +411,25 @@ class MiningMacroNoSpiders:
                 int(abs(y2 - y1))
             )
             self.selection_phase = 5
+            self.update_instructions()
+        elif self.selection_phase == 7: # Fire detection region
+            if not hasattr(self, 'fire_detection_region_start') or not hasattr(self, 'fire_detection_rect_id'):
+                return
+                
+            x1, y1 = self.fire_detection_region_start
+            x2, y2 = event.x, event.y
+            
+            if abs(x2 - x1) < 20 or abs(y2 - y1) < 20:
+                self.status_var.set("Selection too small.")
+                return
+                
+            self.fire_detection_region = (
+                int(min(x1, x2)),
+                int(min(y1, y2)),
+                int(abs(x2 - x1)),
+                int(abs(y2 - y1))
+            )
+            self.selection_phase = 8
             self.update_instructions()
 
     def set_click_point(self, x, y, point_type):
@@ -425,14 +481,15 @@ class MiningMacroNoSpiders:
     def update_instructions(self):
         """Updates the instruction text on the overlay."""
         instructions = {
-            0: "Phase 1/7: Set Mining Click Point 1.\n\nLeft-click your first mining action location.",
-            1: "Phase 2/7: Select Detection Area 1.\n\nDrag a rectangle over the first rock's appearance area.",
-            2: "Phase 3/7: Set Mining Click Point 2.\n\nLeft-click your second mining action location.",
-            3: "Phase 4/7: Select Detection Area 2.\n\nDrag a rectangle over the second rock's appearance area.",
-            4: "Phase 5/7: Set Spider Detection Area.\n\nDrag a rectangle where spiders can appear.",
-            5: "Phase 6/7: Set Spider Attack Points.\n\nLeft-click two different positions to attack spiders from.",
-            6: "Phase 7/7: Set Character Position.\n\nRight-click on your character's approximate center.",
-            7: "All selections complete!\n\nPress Enter to confirm or Esc to cancel."
+            0: "Phase 1/8: Set Mining Click Point 1.\n\nLeft-click your first mining action location.",
+            1: "Phase 2/8: Select Detection Area 1.\n\nDrag a rectangle over the first rock's appearance area.",
+            2: "Phase 3/8: Set Mining Click Point 2.\n\nLeft-click your second mining action location.",
+            3: "Phase 4/8: Select Detection Area 2.\n\nDrag a rectangle over the second rock's appearance area.",
+            4: "Phase 5/8: Set Spider Detection Area.\n\nDrag a rectangle where spiders can appear.",
+            5: "Phase 6/8: Set Spider Attack Points.\n\nLeft-click two different positions to attack spiders from.",
+            6: "Phase 7/8: Set Character Position.\n\nRight-click on your character's approximate center.",
+            7: "Phase 8/8: Set Fire Detection Area.\n\nDrag a rectangle where fire should be detected.",
+            8: "All selections complete!\n\nPress Enter to confirm or Esc to cancel."
         }
         
         # Only update if canvas and instruction_text exist
@@ -455,7 +512,8 @@ class MiningMacroNoSpiders:
             'spider_detection_region': (self.spider_detection_region, "Spider Detection Area"),
             'spider_attack_point_1': (self.spider_attack_point_1, "Spider Attack Point 1"),
             'spider_attack_point_2': (self.spider_attack_point_2, "Spider Attack Point 2"),
-            'character_point': (self.character_point, "Character Position")
+            'character_point': (self.character_point, "Character Position"),
+            'fire_detection_region': (self.fire_detection_region, "Fire Detection Area")
         }
         
         # Check for missing fields
@@ -535,11 +593,12 @@ class MiningMacroNoSpiders:
         
         # Reset all points and regions
         self.selection_phase = 0
-        self.click_point_1 = None
-        self.click_point_2 = None
         self.detection_region_1 = None
         self.detection_region_2 = None
         self.spider_detection_region = None
+        self.fire_detection_region = None
+        self.click_point_1 = None
+        self.click_point_2 = None
         self.spider_attack_point_1 = None
         self.spider_attack_point_2 = None
         self.character_point = None
@@ -615,6 +674,11 @@ class MiningMacroNoSpiders:
         self.reset_btn.config(state=tk.DISABLED)
         self.status_var.set("Running...")
         
+        # Initialize direction tracking
+        self.last_direction = self.current_strategy  # Set to current strategy at start
+        self.direction_switches = 0
+        self.direction_switches_var.set("Direction Switches: 0")
+        
         self.macro_thread = threading.Thread(target=self.run_macro, daemon=True)
         self.macro_thread.start()
     
@@ -631,6 +695,41 @@ class MiningMacroNoSpiders:
         self.direction_switches = 0
         self.direction_switches_var.set("Direction Switches: 0")
 
+    def detect_fire(self):
+        """Check the fire detection region for fire.png with confidence 0.5.
+        
+        Returns:
+            tuple: (x, y) coordinates of the center of the detected fire, or None if not found
+        """
+        if not hasattr(self, 'fire_detection_region') or not self.fire_detection_region:
+            print("[WARNING] No fire detection region set")
+            return None
+            
+        try:
+            # Take screenshot of the fire detection region
+            x, y, w, h = self.fire_detection_region
+            screenshot = pyautogui.screenshot(region=(x, y, w, h))
+            screenshot_cv = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+            
+            # Check for fire with confidence 0.5
+            fire_conf, fire_loc, fire_size = self.detect_any_template(
+                screenshot_cv,
+                ['fire.png'],
+                confidence=0.8
+            )
+            
+            if fire_conf > 0:
+                # Convert local coordinates to screen coordinates
+                fire_x = x + fire_loc[0] + (fire_size[0] // 2) if fire_size else x + fire_loc[0]
+                fire_y = y + fire_loc[1] + (fire_size[1] // 2) if fire_size else y + fire_loc[1]
+                return (fire_x, fire_y)
+                
+            return None
+            
+        except Exception as e:
+            print(f"[ERROR] Error detecting fire: {e}")
+            return None
+            
     def detect_any_template(self, screenshot, templates, confidence=0.7):
         """Detect if any template matches in the screenshot."""
         best_match_val = 0.0
@@ -900,20 +999,37 @@ class MiningMacroNoSpiders:
                             # Still no rock, switch to the next area
                             self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Still no rock. Switching area."))
                             
-                            # Track direction switches
+                            # Calculate new direction (1 or 2)
                             new_direction = 2 if self.current_strategy == 1 else 1
+                            
+                            print(f"Current: {self.current_strategy}, New: {new_direction}, Last: {self.last_direction}, Count: {self.direction_switches}")
+                            
+                            # Check if this is a direction switch (not the first time)
                             if self.last_direction is not None and self.last_direction != new_direction:
+                                print(f"Direction switch detected! Last: {self.last_direction}, New: {new_direction}")
                                 self.direction_switches += 1
-                                self.root.after(0, lambda: self.direction_switches_var.set(f"Direction Switches: {self.direction_switches}"))
+                                
+                                # Update the UI with the new count
+                                self.direction_switches_var.set(f"Direction Switches: {self.direction_switches}")
+                                self.root.update_idletasks()  # Force UI update
                                 
                                 # If we've switched directions twice, wait for the mining delay
                                 if self.direction_switches >= 2:
-                                    self.root.after(0, lambda: self.status_var.set("Waiting mining delay before continuing..."))
+                                    self.status_var.set("Waiting mining delay before continuing...")
+                                    self.root.update_idletasks()  # Force UI update
                                     time.sleep(self.mining_retry_timeout)
                                     self.direction_switches = 0  # Reset counter after delay
-                                    self.root.after(0, lambda: self.direction_switches_var.set("Direction Switches: 0"))
+                                    self.direction_switches_var.set("Direction Switches: 0")
+                                    self.root.update_idletasks()  # Force UI update
+                                    
+                                    # After delay, keep the current direction instead of switching
+                                    print(f"After delay, keeping direction: {self.current_strategy}")
+                                    self.last_direction = self.current_strategy
+                                    phase = 'search'
+                                    continue
                             
-                            self.last_direction = self.current_strategy
+                            # Update direction tracking for next iteration
+                            self.last_direction = new_direction  # Track the direction we're switching to
                             self.current_strategy = new_direction
                             phase = 'search' # Stay in search phase for the new area
                             
@@ -956,6 +1072,14 @@ class MiningMacroNoSpiders:
                             self.attack_spider(spider_pos)
                             # After handling spider, give a moment before continuing
                             time.sleep(0.5)
+                        
+                        # Check for fire with confidence > 0.5
+                        fire_pos = self.detect_fire()
+                        if fire_pos is not None:
+                            self.root.after(0, lambda: self.status_var.set("Fire detected! Stopping macro for safety."))
+                            print("[SAFETY] Fire detected, stopping macro")
+                            self.stop_macro()
+                            return
                         
                         # Now switch to next detection region
                         self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Switching to next area."))
