@@ -69,6 +69,14 @@ class MiningMacroNoSpiders:
         self.detection_confidence_var = tk.StringVar(value="0.5")
         self.detection_confidence: float = 0.5
         
+        # Spider detection confidence
+        self.spider_confidence_var = tk.StringVar(value="0.7")
+        self.spider_confidence: float = 0.7
+        
+        # Spider attack status
+        self.spider_status_var = tk.StringVar(value="Spider: Not Detected")
+        self.spider_attack_in_progress = False
+        
         # Debug settings
         self.ENABLE_DEBUG = False
         self.debug_screenshot_count = 0
@@ -159,15 +167,27 @@ class MiningMacroNoSpiders:
         self.reset_btn = ttk.Button(btn_frame, text="Reset Selection", command=self.setup_region, width=15, state=tk.DISABLED)
         self.reset_btn.pack(side=tk.LEFT, padx=2)
         
-        # Confidence frame
+        # Confidence controls frame
         confidence_frame = ttk.Frame(self.frame)
-        confidence_frame.pack(fill=tk.X, pady=(5, 0))
-
-        ttk.Label(confidence_frame, text="Detection Confidence:").pack(side=tk.LEFT, padx=(0, 5))
-        self.confidence_entry = ttk.Entry(confidence_frame, textvariable=self.detection_confidence_var, width=5)
-        self.confidence_entry.pack(side=tk.LEFT, padx=(0, 10))
-        self.confidence_entry.bind("<FocusOut>", self._validate_detection_confidence)
-        self.confidence_entry.bind("<Return>", self._validate_detection_confidence)
+        confidence_frame.pack(fill='x', pady=5)
+        
+        # Detection confidence
+        detection_frame = ttk.Frame(confidence_frame)
+        detection_frame.pack(fill='x', pady=2)
+        ttk.Label(detection_frame, text="Rock Detection:").pack(side='left')
+        confidence_entry = ttk.Entry(detection_frame, textvariable=self.detection_confidence_var, width=5)
+        confidence_entry.pack(side='left', padx=5)
+        confidence_entry.bind('<Return>', self._validate_detection_confidence)
+        confidence_entry.bind('<FocusOut>', self._validate_detection_confidence)
+        
+        # Spider confidence
+        spider_frame = ttk.Frame(confidence_frame)
+        spider_frame.pack(fill='x', pady=2)
+        ttk.Label(spider_frame, text="Spider Detection:").pack(side='left')
+        spider_confidence_entry = ttk.Entry(spider_frame, textvariable=self.spider_confidence_var, width=5)
+        spider_confidence_entry.pack(side='left', padx=5)
+        spider_confidence_entry.bind('<Return>', self._validate_spider_confidence)
+        spider_confidence_entry.bind('<FocusOut>', self._validate_spider_confidence)
         
         # Timeout settings frame
         timeout_frame = ttk.Frame(self.frame)
@@ -192,6 +212,11 @@ class MiningMacroNoSpiders:
         self.status_var = tk.StringVar(value="Ready")
         status = ttk.Label(self.frame, textvariable=self.status_var, font=('TkDefaultFont', 10, 'bold'), foreground='blue')
         status.pack(pady=(5, 0))
+        
+        # Spider status display
+        spider_status = ttk.Label(self.frame, textvariable=self.spider_status_var, 
+                               font=('TkDefaultFont', 10), foreground='red')
+        spider_status.pack(pady=(2, 5))
 
         self.asset_status_label = ttk.Label(self.frame, textvariable=self.asset_status_var, font=('TkDefaultFont', 9), foreground='gray')
         self.asset_status_label.pack(pady=(0, 5))
@@ -211,13 +236,34 @@ class MiningMacroNoSpiders:
     def _validate_detection_confidence(self, event=None):
         """Validate and update the detection confidence."""
         try:
-            value = float(self.detection_confidence_var.get())
-            if not (0.0 <= value <= 1.0): raise ValueError("Confidence must be 0.0-1.0.")
-            self.detection_confidence = value
-            self.status_var.set(f"Detection confidence set to {self.detection_confidence:.2f}")
+            confidence = float(self.detection_confidence_var.get())
+            if 0.1 <= confidence <= 1.0:
+                self.detection_confidence = confidence
+                self.status_var.set(f"Rock detection confidence set to {confidence}")
+            else:
+                self.status_var.set("Confidence must be between 0.1 and 1.0")
+                self.detection_confidence_var.set("0.5")
+                self.detection_confidence = 0.5
         except ValueError:
-            self.detection_confidence_var.set(f"{self.detection_confidence:.2f}")
-            self.status_var.set("Invalid confidence. Must be 0.0-1.0.")
+            self.status_var.set("Invalid confidence value")
+            self.detection_confidence_var.set("0.5")
+            self.detection_confidence = 0.5
+            
+    def _validate_spider_confidence(self, event=None):
+        """Validate and update the spider detection confidence."""
+        try:
+            confidence = float(self.spider_confidence_var.get())
+            if 0.1 <= confidence <= 1.0:
+                self.spider_confidence = confidence
+                self.status_var.set(f"Spider detection confidence set to {confidence}")
+            else:
+                self.status_var.set("Spider confidence must be between 0.1 and 1.0")
+                self.spider_confidence_var.set("0.7")
+                self.spider_confidence = 0.7
+        except ValueError:
+            self.status_var.set("Invalid spider confidence value")
+            self.spider_confidence_var.set("0.7")
+            self.spider_confidence = 0.7
     
     def _validate_timeout_values(self, event=None):
         """Validate and update the timeout values."""
@@ -809,7 +855,7 @@ class MiningMacroNoSpiders:
             spider_conf, spider_loc, spider_size = self.detect_any_template(
                 screenshot_cv, 
                 self.spider_templates, 
-                confidence=max(0.1, self.detection_confidence * 0.6)  # Lower confidence threshold for spiders
+                confidence=self.spider_confidence
             )
             
             if self.ENABLE_DEBUG:
@@ -823,6 +869,7 @@ class MiningMacroNoSpiders:
                 if self.ENABLE_DEBUG:
                     print(f"[DEBUG] Spider detected at screen coordinates: ({spider_x}, {spider_y})")
                     
+                self.spider_status_var.set(f"Spider Detected! (Confidence: {spider_conf:.2f})")
                 return (spider_x, spider_y)
                 
         except Exception as e:
@@ -886,52 +933,65 @@ class MiningMacroNoSpiders:
         Returns:
             bool: True if attack sequence was completed, False if aborted due to error
         """
-        if not self.character_point:
-            return False
-            
-        # Find the best attack point
+        print(f"[SPIDER] Starting attack sequence at {initial_spider_pos}")
+        self.spider_attack_in_progress = True
+        self.spider_status_var.set("Spider: Attacking...")
+        
+        # Get the best attack point based on spider position
         attack_point = self.get_best_attack_point(initial_spider_pos)
         if not attack_point:
+            print("[SPIDER] No valid attack point found")
+            self.spider_status_var.set("Spider: No attack point")
+            self.spider_attack_in_progress = False
             return False
             
-        max_attempts = 10  # Maximum number of attack attempts
-        attempts = 0
-        spider_detected = True
+        print(f"[SPIDER] Attacking from point {attack_point}")
         
         try:
-            self.root.after(0, lambda: self.status_var.set("Spider detected! Attacking..."))
-            
-            # Initial move to attack point
-            pyautogui.moveTo(attack_point[0], attack_point[1], duration=0.2)
+            # Move to attack point and attack
+            pydirectinput.moveTo(attack_point[0], attack_point[1], duration=0.1)
             time.sleep(0.1)
+            pydirectinput.click(button='left')
             
-            # Attack loop
-            while self.running and spider_detected and attempts < max_attempts:
-                # Perform attack
-                pyautogui.click(button='left')
-                attempts += 1
-                
-                # Small delay between attacks
-                time.sleep(0.2)
+            # Keep attacking while spider is still in the detection region
+            start_time = time.time()
+            max_attack_time = 10.0  # Maximum time to spend attacking a single spider
+            last_attack_time = time.time()
+            
+            while time.time() - start_time < max_attack_time:
+                # Update status with time remaining
+                time_left = max(0, max_attack_time - (time.time() - start_time))
+                self.spider_status_var.set(f"Spider: Attacking... ({time_left:.1f}s left)")
                 
                 # Check if spider is still there
-                current_spider_pos = self.check_for_spiders()
-                spider_detected = current_spider_pos is not None
+                current_spider = self.check_for_spiders()
+                if not current_spider:
+                    print("[SPIDER] Spider no longer detected, attack complete")
+                    self.spider_status_var.set("Spider: Defeated!")
+                    time.sleep(0.5)  # Small delay to show defeated status
+                    self.spider_attack_in_progress = False
+                    return True
+                    
+                # Continue attacking (about 2 attacks per second)
+                current_time = time.time()
+                if current_time - last_attack_time >= 0.5:  # Attack twice per second
+                    pydirectinput.click(button='left')
+                    last_attack_time = current_time
                 
-                # If spider moved, update attack point
-                if spider_detected:
-                    attack_point = self.get_best_attack_point(current_spider_pos)
-                    if attack_point:
-                        pyautogui.moveTo(attack_point[0], attack_point[1], duration=0.1)
-            
-            # Return to character position after finishing
-            pyautogui.moveTo(self.character_point[0], self.character_point[1], duration=0.2)
-            
-            if not spider_detected:
-                self.root.after(0, lambda: self.status_var.set("Spider defeated!"))
-                time.sleep(0.5)  # Small delay before resuming mining
-            elif attempts >= max_attempts:
-                self.root.after(0, lambda: self.status_var.set("Max attack attempts reached"))
+                # Small sleep to prevent CPU overload
+                time.sleep(0.05)
+                
+                # Check if we should abort
+                if not self.running:
+                    print("[SPIDER] Attack sequence aborted")
+                    self.spider_status_var.set("Spider: Attack Aborted")
+                    self.spider_attack_in_progress = False
+                    return False
+                    
+            print("[SPIDER] Max attack time reached")
+            self.spider_status_var.set("Spider: Attack Timeout")
+            time.sleep(0.5)  # Small delay to show timeout status
+            self.spider_attack_in_progress = False
             
             return True
             
