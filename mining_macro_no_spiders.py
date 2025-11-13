@@ -46,6 +46,13 @@ class MiningMacroNoSpiders:
         self.confidence_var = tk.StringVar(value="Confidence: N/A")
         self.current_strategy: int = 1
         
+        # Stopwatch and rock counter
+        self.total_elapsed_time: float = 0.0
+        self.session_start_time: Optional[float] = None
+        self.rock_counter: int = 0
+        self.stopwatch_var = tk.StringVar(value="Stopwatch: 00:00:00")
+        self.rock_counter_var = tk.StringVar(value="Rocks Mined: 0")
+        
         # Direction switching state
         self.last_direction = None
         self.direction_switches = 0
@@ -209,6 +216,16 @@ class MiningMacroNoSpiders:
         self.mining_retry_entry.bind("<FocusOut>", self._validate_timeout_values)
         self.mining_retry_entry.bind("<Return>", self._validate_timeout_values)
         
+        # Indicators frame
+        indicators_frame = ttk.Frame(self.frame)
+        indicators_frame.pack(fill=tk.X, pady=(5, 2))
+        
+        stopwatch_label = ttk.Label(indicators_frame, textvariable=self.stopwatch_var, font=('TkDefaultFont', 9), foreground='black')
+        stopwatch_label.pack(side=tk.LEFT, padx=(0, 10))
+        
+        rock_counter_label = ttk.Label(indicators_frame, textvariable=self.rock_counter_var, font=('TkDefaultFont', 9), foreground='black')
+        rock_counter_label.pack(side=tk.LEFT)
+        
         self.status_var = tk.StringVar(value="Ready")
         status = ttk.Label(self.frame, textvariable=self.status_var, font=('TkDefaultFont', 10, 'bold'), foreground='blue')
         status.pack(pady=(5, 0))
@@ -286,6 +303,17 @@ class MiningMacroNoSpiders:
             self.area_switch_var.set(f"{self.area_switch_timeout:.1f}")
             self.mining_retry_var.set(f"{self.mining_retry_timeout:.1f}")
             self.status_var.set(f"Invalid timeout: {str(e)}")
+
+    def update_stopwatch(self):
+        """Update the stopwatch label every second."""
+        if self.running and self.session_start_time is not None:
+            current_elapsed_in_session = time.time() - self.session_start_time
+            display_time = self.total_elapsed_time + current_elapsed_in_session
+            
+            hours, remainder = divmod(int(display_time), 3600)
+            minutes, seconds = divmod(remainder, 60)
+            self.stopwatch_var.set(f"Stopwatch: {hours:02}:{minutes:02}:{seconds:02}")
+            self.root.after(1000, self.update_stopwatch)
 
     def setup_region(self):
         """Open an overlay to select screen regions."""
@@ -720,6 +748,12 @@ class MiningMacroNoSpiders:
         self.reset_btn.config(state=tk.DISABLED)
         self.status_var.set("Running...")
         
+        # Initialize counters and stopwatch
+        self.session_start_time = time.time()
+        self.rock_counter = 0
+        self.rock_counter_var.set("Rocks Mined: 0")
+        self.update_stopwatch()
+        
         # Initialize direction tracking
         self.last_direction = self.current_strategy  # Set to current strategy at start
         self.direction_switches = 0
@@ -735,6 +769,11 @@ class MiningMacroNoSpiders:
         self.stop_btn.config(state=tk.DISABLED)
         self.reset_btn.config(state=tk.NORMAL)
         self.status_var.set("Stopped")
+        
+        # Accumulate elapsed time
+        if self.session_start_time is not None:
+            self.total_elapsed_time += (time.time() - self.session_start_time)
+            self.session_start_time = None
         
         # Reset direction tracking when stopping
         self.last_direction = None
@@ -1123,7 +1162,11 @@ class MiningMacroNoSpiders:
                     depleted_conf, _, _ = self.detect_any_template(screenshot_cv, self.mined_rock_templates, confidence=self.detection_confidence)
 
                     if depleted_conf > 0:
-                        # Rock is mined, check for spiders before switching areas
+                        # Rock is mined, increment counter
+                        self.rock_counter += 1
+                        self.root.after(0, lambda: self.rock_counter_var.set(f"Rocks Mined: {self.rock_counter}"))
+                        
+                        # Check for spiders before switching areas
                         self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Area depleted. Checking for spiders..."))
                         
                         # Check for spiders and attack if found
