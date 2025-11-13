@@ -81,6 +81,10 @@ class MiningMacroNoSpiders:
         self.detection_confidence_var = tk.StringVar(value="0.5")
         self.detection_confidence: float = 0.5
         
+        # Depleted rock detection confidence
+        self.depleted_confidence_var = tk.StringVar(value="0.5")
+        self.depleted_confidence: float = 0.5
+        
         # Spider detection confidence
         self.spider_confidence_var = tk.StringVar(value="0.7")
         self.spider_confidence: float = 0.7
@@ -199,6 +203,15 @@ class MiningMacroNoSpiders:
         confidence_entry.bind('<Return>', self._validate_detection_confidence)
         confidence_entry.bind('<FocusOut>', self._validate_detection_confidence)
         
+        # Depleted rock confidence
+        depleted_frame = ttk.Frame(confidence_frame)
+        depleted_frame.pack(fill='x', pady=2)
+        ttk.Label(depleted_frame, text="Depleted Rock:").pack(side='left')
+        depleted_entry = ttk.Entry(depleted_frame, textvariable=self.depleted_confidence_var, width=5)
+        depleted_entry.pack(side='left', padx=5)
+        depleted_entry.bind('<Return>', self._validate_depleted_confidence)
+        depleted_entry.bind('<FocusOut>', self._validate_depleted_confidence)
+        
         # Spider confidence
         spider_frame = ttk.Frame(confidence_frame)
         spider_frame.pack(fill='x', pady=2)
@@ -208,15 +221,11 @@ class MiningMacroNoSpiders:
         spider_confidence_entry.bind('<Return>', self._validate_spider_confidence)
         spider_confidence_entry.bind('<FocusOut>', self._validate_spider_confidence)
         
-        # Add spider confidence display
-        ttk.Label(spider_frame, textvariable=self.spider_confidence_display).pack(side='left', padx=5)
-        
-        # Fire confidence display
+        # Fire status label
         fire_frame = ttk.Frame(confidence_frame)
         fire_frame.pack(fill='x', pady=2)
         ttk.Label(fire_frame, text="Fire Detection:").pack(side='left')
         ttk.Label(fire_frame, textvariable=self.fire_confidence_display).pack(side='left', padx=5)
-        ttk.Label(fire_frame, textvariable=self.fire_status_var).pack(side='left', padx=5)
         
         # Timeout settings frame
         timeout_frame = ttk.Frame(self.frame)
@@ -283,9 +292,6 @@ class MiningMacroNoSpiders:
         ttk.Label(depletion_frame, text="Rock Depletion:", width=12, anchor='w').pack(side=tk.LEFT)
         ttk.Label(depletion_frame, textvariable=self.depletion_confidence_var, width=35, anchor='w').pack(side=tk.LEFT)
         
-        # Direction switches counter
-        ttk.Label(detection_status_frame, textvariable=self.direction_switches_var).pack(anchor='w')
-        
         # Preview window
         preview_frame = ttk.LabelFrame(self.frame, text="Preview", padding=5)
         preview_frame.pack(fill='x', pady=5, padx=2)
@@ -321,6 +327,19 @@ class MiningMacroNoSpiders:
             self.status_var.set("Invalid confidence value")
             self.detection_confidence_var.set("0.5")
             self.detection_confidence = 0.5
+            
+    def _validate_depleted_confidence(self, event=None):
+        """Validate and update the depleted rock detection confidence."""
+        try:
+            value = float(self.depleted_confidence_var.get())
+            if 0.1 <= value <= 1.0:
+                self.depleted_confidence = value
+            else:
+                self.depleted_confidence_var.set("0.5")
+                self.depleted_confidence = 0.5
+        except ValueError:
+            self.depleted_confidence_var.set("0.5")
+            self.depleted_confidence = 0.5
             
     def _validate_spider_confidence(self, event=None):
         """Validate and update the spider detection confidence."""
@@ -1297,14 +1316,29 @@ class MiningMacroNoSpiders:
 
                 # === MINING PHASE (2nd phase) ===
                 elif phase == 'mining':
-                    # Check for minable rocks first (safety check from flow.md)
-                    rock_found_conf, _, _ = self.detect_any_template(screenshot_cv, rock_phases, confidence=self.detection_confidence)
+                    # Check for minable rocks with 3 samples for better accuracy
+                    rock_confidences = []
+                    for _ in range(3):
+                        screenshot = pyautogui.screenshot(region=active_detection_region)
+                        screenshot_cv = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+                        conf, _, _ = self.detect_any_template(screenshot_cv, rock_phases, confidence=self.detection_confidence)
+                        rock_confidences.append(conf)
+                        if conf == 0:  # If any check fails, immediately consider it gone
+                            break
+                        time.sleep(0.1)  # Small delay between samples
+                    
+                    # Use minimum confidence (most conservative approach)
+                    rock_found_conf = min(rock_confidences) if rock_confidences else 0
+                    
                     if rock_found_conf == 0:
                         # Rock disappeared, go back to search phase
-                        self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Rock gone. Searching."))
+                        self.root.after(0, lambda s=strategy_name: self.status_var.set(
+                            f"{s}: Rock gone. Checks: {', '.join(f'{c:.2f}' for c in rock_confidences)}"))
                         phase = 'search'
                         continue
-                    self.root.after(0, lambda conf=rock_found_conf: self.confidence_var.set(f"Minable Rock Confidence: {conf:.2f}"))
+                        
+                    self.root.after(0, lambda conf=rock_found_conf: self.confidence_var.set(
+                        f"Rock Checks: {', '.join(f'{c:.2f}' for c in rock_confidences)} (min: {rock_found_conf:.2f})"))
 
                     # Perform mining action
                     self.root.after(0, lambda s=strategy_name: self.status_var.set(f"Mining at {s}..."))
@@ -1314,10 +1348,24 @@ class MiningMacroNoSpiders:
                     time.sleep(0.5) 
                     if not self.running: break
 
-                    # Check if rock is depleted
-                    screenshot = pyautogui.screenshot(region=active_detection_region)
-                    screenshot_cv = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
-                    depleted_conf, _, _ = self.detect_any_template(screenshot_cv, self.mined_rock_templates, confidence=self.detection_confidence)
+                    # Check if rock is depleted with 3 samples for better accuracy
+                    self.root.after(0, lambda: self.depletion_confidence_var.set("Depletion: Checking..."))
+                    
+                    # Take 3 samples and average the confidence values
+                    confidences = []
+                    for _ in range(3):
+                        screenshot = pyautogui.screenshot(region=active_detection_region)
+                        screenshot_cv = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+                        conf, _, _ = self.detect_any_template(screenshot_cv, self.mined_rock_templates, confidence=self.depleted_confidence)
+                        confidences.append(conf)
+                        time.sleep(0.1)  # Small delay between samples
+                    
+                    # Calculate average confidence
+                    depleted_conf = sum(confidences) / len(confidences)
+                    
+                    # Update debug info
+                    self.root.after(0, lambda: self.status_var.set(
+                        f"Depletion checks: {', '.join(f'{c:.2f}' for c in confidences)} (avg: {depleted_conf:.2f})"))
                     
                     # Update preview window
                     preview_img = cv2.resize(screenshot_cv, self.preview_size)
