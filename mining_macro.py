@@ -33,6 +33,7 @@ class MiningMacroNoSpiders:
         self.detection_region_1: Optional[Tuple[int, int, int, int]] = None
         self.detection_region_2: Optional[Tuple[int, int, int, int]] = None
         self.spider_detection_region: Optional[Tuple[int, int, int, int]] = None
+        self.fire_detection_region: Optional[Tuple[int, int, int, int]] = None
         self.click_point_1: Optional[Tuple[int, int]] = None
         self.click_point_2: Optional[Tuple[int, int]] = None
         self.spider_attack_point_1: Optional[Tuple[int, int]] = None
@@ -45,13 +46,25 @@ class MiningMacroNoSpiders:
         self.confidence_var = tk.StringVar(value="Confidence: N/A")
         self.current_strategy: int = 1
         
+        # Stopwatch and rock counter
+        self.total_elapsed_time: float = 0.0
+        self.session_start_time: Optional[float] = None
+        self.rock_counter: int = 0
+        self.stopwatch_var = tk.StringVar(value="Stopwatch: 00:00:00")
+        self.rock_counter_var = tk.StringVar(value="Rocks Mined: 0")
+        
         # Direction switching state
         self.last_direction = None
         self.direction_switches = 0
         self.direction_switches_var = tk.StringVar(value="Direction Switches: 0")
         
         self.mined_rock_templates = ['rock_phase_4.png']
-        self.spider_templates = ['spider1.png', 'spider2.png', 'spider3.png', 'spider4.png']  # Add your spider template image
+        # Spider templates including the new leg assets for better detection
+        self.spider_templates = [
+            'spider1.png', 'spider2.png', 'spider3.png', 'spider4.png',
+            'spider1_legs_1.png', 'spider1_legs_2.png',
+            'spider4_legs_1.png', 'spider4_legs_2.png'
+        ]  # Spider templates including leg variations
         
         # Relative offsets from character point
         self.relative_mining_offset_1: Optional[Tuple[int, int]] = None
@@ -62,6 +75,14 @@ class MiningMacroNoSpiders:
         # Detection confidence
         self.detection_confidence_var = tk.StringVar(value="0.5")
         self.detection_confidence: float = 0.5
+        
+        # Spider detection confidence
+        self.spider_confidence_var = tk.StringVar(value="0.7")
+        self.spider_confidence: float = 0.7
+        
+        # Spider attack status
+        self.spider_status_var = tk.StringVar(value="Spider: Not Detected")
+        self.spider_attack_in_progress = False
         
         # Debug settings
         self.ENABLE_DEBUG = False
@@ -153,15 +174,27 @@ class MiningMacroNoSpiders:
         self.reset_btn = ttk.Button(btn_frame, text="Reset Selection", command=self.setup_region, width=15, state=tk.DISABLED)
         self.reset_btn.pack(side=tk.LEFT, padx=2)
         
-        # Confidence frame
+        # Confidence controls frame
         confidence_frame = ttk.Frame(self.frame)
-        confidence_frame.pack(fill=tk.X, pady=(5, 0))
-
-        ttk.Label(confidence_frame, text="Detection Confidence:").pack(side=tk.LEFT, padx=(0, 5))
-        self.confidence_entry = ttk.Entry(confidence_frame, textvariable=self.detection_confidence_var, width=5)
-        self.confidence_entry.pack(side=tk.LEFT, padx=(0, 10))
-        self.confidence_entry.bind("<FocusOut>", self._validate_detection_confidence)
-        self.confidence_entry.bind("<Return>", self._validate_detection_confidence)
+        confidence_frame.pack(fill='x', pady=5)
+        
+        # Detection confidence
+        detection_frame = ttk.Frame(confidence_frame)
+        detection_frame.pack(fill='x', pady=2)
+        ttk.Label(detection_frame, text="Rock Detection:").pack(side='left')
+        confidence_entry = ttk.Entry(detection_frame, textvariable=self.detection_confidence_var, width=5)
+        confidence_entry.pack(side='left', padx=5)
+        confidence_entry.bind('<Return>', self._validate_detection_confidence)
+        confidence_entry.bind('<FocusOut>', self._validate_detection_confidence)
+        
+        # Spider confidence
+        spider_frame = ttk.Frame(confidence_frame)
+        spider_frame.pack(fill='x', pady=2)
+        ttk.Label(spider_frame, text="Spider Detection:").pack(side='left')
+        spider_confidence_entry = ttk.Entry(spider_frame, textvariable=self.spider_confidence_var, width=5)
+        spider_confidence_entry.pack(side='left', padx=5)
+        spider_confidence_entry.bind('<Return>', self._validate_spider_confidence)
+        spider_confidence_entry.bind('<FocusOut>', self._validate_spider_confidence)
         
         # Timeout settings frame
         timeout_frame = ttk.Frame(self.frame)
@@ -183,9 +216,24 @@ class MiningMacroNoSpiders:
         self.mining_retry_entry.bind("<FocusOut>", self._validate_timeout_values)
         self.mining_retry_entry.bind("<Return>", self._validate_timeout_values)
         
+        # Indicators frame
+        indicators_frame = ttk.Frame(self.frame)
+        indicators_frame.pack(fill=tk.X, pady=(5, 2))
+        
+        stopwatch_label = ttk.Label(indicators_frame, textvariable=self.stopwatch_var, font=('TkDefaultFont', 9), foreground='black')
+        stopwatch_label.pack(side=tk.LEFT, padx=(0, 10))
+        
+        rock_counter_label = ttk.Label(indicators_frame, textvariable=self.rock_counter_var, font=('TkDefaultFont', 9), foreground='black')
+        rock_counter_label.pack(side=tk.LEFT)
+        
         self.status_var = tk.StringVar(value="Ready")
         status = ttk.Label(self.frame, textvariable=self.status_var, font=('TkDefaultFont', 10, 'bold'), foreground='blue')
         status.pack(pady=(5, 0))
+        
+        # Spider status display
+        spider_status = ttk.Label(self.frame, textvariable=self.spider_status_var, 
+                               font=('TkDefaultFont', 10), foreground='red')
+        spider_status.pack(pady=(2, 5))
 
         self.asset_status_label = ttk.Label(self.frame, textvariable=self.asset_status_var, font=('TkDefaultFont', 9), foreground='gray')
         self.asset_status_label.pack(pady=(0, 5))
@@ -205,13 +253,34 @@ class MiningMacroNoSpiders:
     def _validate_detection_confidence(self, event=None):
         """Validate and update the detection confidence."""
         try:
-            value = float(self.detection_confidence_var.get())
-            if not (0.0 <= value <= 1.0): raise ValueError("Confidence must be 0.0-1.0.")
-            self.detection_confidence = value
-            self.status_var.set(f"Detection confidence set to {self.detection_confidence:.2f}")
+            confidence = float(self.detection_confidence_var.get())
+            if 0.1 <= confidence <= 1.0:
+                self.detection_confidence = confidence
+                self.status_var.set(f"Rock detection confidence set to {confidence}")
+            else:
+                self.status_var.set("Confidence must be between 0.1 and 1.0")
+                self.detection_confidence_var.set("0.5")
+                self.detection_confidence = 0.5
         except ValueError:
-            self.detection_confidence_var.set(f"{self.detection_confidence:.2f}")
-            self.status_var.set("Invalid confidence. Must be 0.0-1.0.")
+            self.status_var.set("Invalid confidence value")
+            self.detection_confidence_var.set("0.5")
+            self.detection_confidence = 0.5
+            
+    def _validate_spider_confidence(self, event=None):
+        """Validate and update the spider detection confidence."""
+        try:
+            confidence = float(self.spider_confidence_var.get())
+            if 0.1 <= confidence <= 1.0:
+                self.spider_confidence = confidence
+                self.status_var.set(f"Spider detection confidence set to {confidence}")
+            else:
+                self.status_var.set("Spider confidence must be between 0.1 and 1.0")
+                self.spider_confidence_var.set("0.7")
+                self.spider_confidence = 0.7
+        except ValueError:
+            self.status_var.set("Invalid spider confidence value")
+            self.spider_confidence_var.set("0.7")
+            self.spider_confidence = 0.7
     
     def _validate_timeout_values(self, event=None):
         """Validate and update the timeout values."""
@@ -235,6 +304,17 @@ class MiningMacroNoSpiders:
             self.mining_retry_var.set(f"{self.mining_retry_timeout:.1f}")
             self.status_var.set(f"Invalid timeout: {str(e)}")
 
+    def update_stopwatch(self):
+        """Update the stopwatch label every second."""
+        if self.running and self.session_start_time is not None:
+            current_elapsed_in_session = time.time() - self.session_start_time
+            display_time = self.total_elapsed_time + current_elapsed_in_session
+            
+            hours, remainder = divmod(int(display_time), 3600)
+            minutes, seconds = divmod(remainder, 60)
+            self.stopwatch_var.set(f"Stopwatch: {hours:02}:{minutes:02}:{seconds:02}")
+            self.root.after(1000, self.update_stopwatch)
+
     def setup_region(self):
         """Open an overlay to select screen regions."""
         self.reset_selection()
@@ -247,7 +327,7 @@ class MiningMacroNoSpiders:
         self.canvas = tk.Canvas(self.overlay, highlightthickness=0, cursor='cross', bg='black', bd=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
         
-        self.selection_phase = 0 # 0: click_1, 1: region_1, 2: click_2, 3: region_2, 4: character
+        self.selection_phase = 0 # 0: click_1, 1: region_1, 2: click_2, 3: region_2, 4: spider_region, 5: spider_attack, 6: character, 7: fire_region
         
         self.detection_region_1_start = None
         self.detection_region_1_rect_id = None
@@ -313,6 +393,22 @@ class MiningMacroNoSpiders:
                 self.status_var.set("Second spider attack point set. Right-click to set character position.")
                 self.selection_phase = 6
                 self.update_instructions()
+        elif self.selection_phase == 7: # Fire detection region
+            if not hasattr(self, 'fire_detection_region_start'):
+                self.fire_detection_region_start = (event.x, event.y)
+            else:
+                # Create rectangle from start to current point
+                x1, y1 = self.fire_detection_region_start
+                x2, y2 = event.x, event.y
+                if abs(x2 - x1) < 20 or abs(y2 - y1) < 20:
+                    self.status_var.set("Selection too small.")
+                    return
+                self.fire_detection_region = (
+                    min(x1, x2), min(y1, y2),
+                    abs(x2 - x1), abs(y2 - y1)
+                )
+                self.selection_phase = 8
+                self.update_instructions()
     
     def on_drag(self, event):
         """Handle mouse drag for region selection."""
@@ -341,6 +437,21 @@ class MiningMacroNoSpiders:
                     fill='purple', 
                     stipple='gray50', 
                     width=2, 
+                    tags='selection'
+                )
+        elif self.selection_phase == 7: # Fire detection region
+            if not hasattr(self, 'fire_detection_region_start'): return
+            x1, y1 = self.fire_detection_region_start
+            x2, y2 = event.x, event.y
+            if hasattr(self, 'fire_detection_rect_id'):
+                self.canvas.coords(self.fire_detection_rect_id, x1, y1, x2, y2)
+            else:
+                self.fire_detection_rect_id = self.canvas.create_rectangle(
+                    x1, y1, x2, y2,
+                    outline='red',
+                    fill='dark red',
+                    stipple='gray50',
+                    width=2,
                     tags='selection'
                 )
 
@@ -374,6 +485,25 @@ class MiningMacroNoSpiders:
                 int(abs(y2 - y1))
             )
             self.selection_phase = 5
+            self.update_instructions()
+        elif self.selection_phase == 7: # Fire detection region
+            if not hasattr(self, 'fire_detection_region_start') or not hasattr(self, 'fire_detection_rect_id'):
+                return
+                
+            x1, y1 = self.fire_detection_region_start
+            x2, y2 = event.x, event.y
+            
+            if abs(x2 - x1) < 20 or abs(y2 - y1) < 20:
+                self.status_var.set("Selection too small.")
+                return
+                
+            self.fire_detection_region = (
+                int(min(x1, x2)),
+                int(min(y1, y2)),
+                int(abs(x2 - x1)),
+                int(abs(y2 - y1))
+            )
+            self.selection_phase = 8
             self.update_instructions()
 
     def set_click_point(self, x, y, point_type):
@@ -425,14 +555,15 @@ class MiningMacroNoSpiders:
     def update_instructions(self):
         """Updates the instruction text on the overlay."""
         instructions = {
-            0: "Phase 1/7: Set Mining Click Point 1.\n\nLeft-click your first mining action location.",
-            1: "Phase 2/7: Select Detection Area 1.\n\nDrag a rectangle over the first rock's appearance area.",
-            2: "Phase 3/7: Set Mining Click Point 2.\n\nLeft-click your second mining action location.",
-            3: "Phase 4/7: Select Detection Area 2.\n\nDrag a rectangle over the second rock's appearance area.",
-            4: "Phase 5/7: Set Spider Detection Area.\n\nDrag a rectangle where spiders can appear.",
-            5: "Phase 6/7: Set Spider Attack Points.\n\nLeft-click two different positions to attack spiders from.",
-            6: "Phase 7/7: Set Character Position.\n\nRight-click on your character's approximate center.",
-            7: "All selections complete!\n\nPress Enter to confirm or Esc to cancel."
+            0: "Phase 1/8: Set Mining Click Point 1.\n\nLeft-click your first mining action location.",
+            1: "Phase 2/8: Select Detection Area 1.\n\nDrag a rectangle over the first rock's appearance area.",
+            2: "Phase 3/8: Set Mining Click Point 2.\n\nLeft-click your second mining action location.",
+            3: "Phase 4/8: Select Detection Area 2.\n\nDrag a rectangle over the second rock's appearance area.",
+            4: "Phase 5/8: Set Spider Detection Area.\n\nDrag a rectangle where spiders can appear.",
+            5: "Phase 6/8: Set Spider Attack Points.\n\nLeft-click two different positions to attack spiders from.",
+            6: "Phase 7/8: Set Character Position.\n\nRight-click on your character's approximate center.",
+            7: "Phase 8/8: Set Fire Detection Area.\n\nDrag a rectangle where fire should be detected.",
+            8: "All selections complete!\n\nPress Enter to confirm or Esc to cancel."
         }
         
         # Only update if canvas and instruction_text exist
@@ -455,7 +586,8 @@ class MiningMacroNoSpiders:
             'spider_detection_region': (self.spider_detection_region, "Spider Detection Area"),
             'spider_attack_point_1': (self.spider_attack_point_1, "Spider Attack Point 1"),
             'spider_attack_point_2': (self.spider_attack_point_2, "Spider Attack Point 2"),
-            'character_point': (self.character_point, "Character Position")
+            'character_point': (self.character_point, "Character Position"),
+            'fire_detection_region': (self.fire_detection_region, "Fire Detection Area")
         }
         
         # Check for missing fields
@@ -535,11 +667,12 @@ class MiningMacroNoSpiders:
         
         # Reset all points and regions
         self.selection_phase = 0
-        self.click_point_1 = None
-        self.click_point_2 = None
         self.detection_region_1 = None
         self.detection_region_2 = None
         self.spider_detection_region = None
+        self.fire_detection_region = None
+        self.click_point_1 = None
+        self.click_point_2 = None
         self.spider_attack_point_1 = None
         self.spider_attack_point_2 = None
         self.character_point = None
@@ -615,6 +748,17 @@ class MiningMacroNoSpiders:
         self.reset_btn.config(state=tk.DISABLED)
         self.status_var.set("Running...")
         
+        # Initialize counters and stopwatch
+        self.session_start_time = time.time()
+        self.rock_counter = 0
+        self.rock_counter_var.set("Rocks Mined: 0")
+        self.update_stopwatch()
+        
+        # Initialize direction tracking
+        self.last_direction = self.current_strategy  # Set to current strategy at start
+        self.direction_switches = 0
+        self.direction_switches_var.set("Direction Switches: 0")
+        
         self.macro_thread = threading.Thread(target=self.run_macro, daemon=True)
         self.macro_thread.start()
     
@@ -626,49 +770,49 @@ class MiningMacroNoSpiders:
         self.reset_btn.config(state=tk.NORMAL)
         self.status_var.set("Stopped")
         
+        # Accumulate elapsed time
+        if self.session_start_time is not None:
+            self.total_elapsed_time += (time.time() - self.session_start_time)
+            self.session_start_time = None
+        
         # Reset direction tracking when stopping
         self.last_direction = None
         self.direction_switches = 0
         self.direction_switches_var.set("Direction Switches: 0")
 
-    def detect_fire_or_smoke(self):
-        """Check the entire screen for fire.png or smoke.png with confidence 0.3.
+    def detect_fire(self):
+        """Check the fire detection region for fire.png with confidence 0.5.
         
         Returns:
-            tuple: (x, y) coordinates of the center of the detected fire or smoke, or None if not found
+            tuple: (x, y) coordinates of the center of the detected fire, or None if not found
         """
+        if not hasattr(self, 'fire_detection_region') or not self.fire_detection_region:
+            print("[WARNING] No fire detection region set")
+            return None
+            
         try:
-            # Take screenshot of the entire screen
-            screenshot = pyautogui.screenshot()
+            # Take screenshot of the fire detection region
+            x, y, w, h = self.fire_detection_region
+            screenshot = pyautogui.screenshot(region=(x, y, w, h))
             screenshot_cv = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
             
-            # Check for fire and smoke with confidence 0.3
+            # Check for fire with confidence 0.5
             fire_conf, fire_loc, fire_size = self.detect_any_template(
                 screenshot_cv,
                 ['fire.png'],
-                confidence=0.3
+                confidence=0.8
             )
             
-            smoke_conf, smoke_loc, smoke_size = self.detect_any_template(
-                screenshot_cv,
-                ['smoke.png'],
-                confidence=0.3
-            )
-            
-            # Return the location with higher confidence, or None if neither is found
-            if fire_conf > 0 and (fire_conf > smoke_conf or smoke_conf == 0):
-                x = fire_loc[0] + (fire_size[0] // 2) if fire_size else fire_loc[0]
-                y = fire_loc[1] + (fire_size[1] // 2) if fire_size else fire_loc[1]
-                return (x, y)
-            elif smoke_conf > 0:
-                x = smoke_loc[0] + (smoke_size[0] // 2) if smoke_size else smoke_loc[0]
-                y = smoke_loc[1] + (smoke_size[1] // 2) if smoke_size else smoke_loc[1]
-                return (x, y)
+            if fire_conf > 0:
+                # Convert local coordinates to screen coordinates
+                fire_x = x + fire_loc[0] + (fire_size[0] // 2) if fire_size else x + fire_loc[0]
+                fire_y = y + fire_loc[1] + (fire_size[1] // 2) if fire_size else y + fire_loc[1]
+                return (fire_x, fire_y)
                 
             return None
             
         except Exception as e:
-            print(f"[ERROR] Error detecting fire or smoke: {e}")
+            print(f"[ERROR] Error detecting fire: {e}")
             return None
             
     def detect_any_template(self, screenshot, templates, confidence=0.7):
@@ -750,7 +894,7 @@ class MiningMacroNoSpiders:
             spider_conf, spider_loc, spider_size = self.detect_any_template(
                 screenshot_cv, 
                 self.spider_templates, 
-                confidence=max(0.1, self.detection_confidence * 0.6)  # Lower confidence threshold for spiders
+                confidence=self.spider_confidence
             )
             
             if self.ENABLE_DEBUG:
@@ -764,6 +908,7 @@ class MiningMacroNoSpiders:
                 if self.ENABLE_DEBUG:
                     print(f"[DEBUG] Spider detected at screen coordinates: ({spider_x}, {spider_y})")
                     
+                self.spider_status_var.set(f"Spider Detected! (Confidence: {spider_conf:.2f})")
                 return (spider_x, spider_y)
                 
         except Exception as e:
@@ -827,52 +972,65 @@ class MiningMacroNoSpiders:
         Returns:
             bool: True if attack sequence was completed, False if aborted due to error
         """
-        if not self.character_point:
-            return False
-            
-        # Find the best attack point
+        print(f"[SPIDER] Starting attack sequence at {initial_spider_pos}")
+        self.spider_attack_in_progress = True
+        self.spider_status_var.set("Spider: Attacking...")
+        
+        # Get the best attack point based on spider position
         attack_point = self.get_best_attack_point(initial_spider_pos)
         if not attack_point:
+            print("[SPIDER] No valid attack point found")
+            self.spider_status_var.set("Spider: No attack point")
+            self.spider_attack_in_progress = False
             return False
             
-        max_attempts = 10  # Maximum number of attack attempts
-        attempts = 0
-        spider_detected = True
+        print(f"[SPIDER] Attacking from point {attack_point}")
         
         try:
-            self.root.after(0, lambda: self.status_var.set("Spider detected! Attacking..."))
-            
-            # Initial move to attack point
-            pyautogui.moveTo(attack_point[0], attack_point[1], duration=0.2)
+            # Move to attack point and attack
+            pydirectinput.moveTo(attack_point[0], attack_point[1], duration=0.1)
             time.sleep(0.1)
+            pydirectinput.click(button='left')
             
-            # Attack loop
-            while self.running and spider_detected and attempts < max_attempts:
-                # Perform attack
-                pyautogui.click(button='left')
-                attempts += 1
-                
-                # Small delay between attacks
-                time.sleep(0.2)
+            # Keep attacking while spider is still in the detection region
+            start_time = time.time()
+            max_attack_time = 10.0  # Maximum time to spend attacking a single spider
+            last_attack_time = time.time()
+            
+            while time.time() - start_time < max_attack_time:
+                # Update status with time remaining
+                time_left = max(0, max_attack_time - (time.time() - start_time))
+                self.spider_status_var.set(f"Spider: Attacking... ({time_left:.1f}s left)")
                 
                 # Check if spider is still there
-                current_spider_pos = self.check_for_spiders()
-                spider_detected = current_spider_pos is not None
+                current_spider = self.check_for_spiders()
+                if not current_spider:
+                    print("[SPIDER] Spider no longer detected, attack complete")
+                    self.spider_status_var.set("Spider: Defeated!")
+                    time.sleep(0.5)  # Small delay to show defeated status
+                    self.spider_attack_in_progress = False
+                    return True
+                    
+                # Continue attacking (about 2 attacks per second)
+                current_time = time.time()
+                if current_time - last_attack_time >= 0.5:  # Attack twice per second
+                    pydirectinput.click(button='left')
+                    last_attack_time = current_time
                 
-                # If spider moved, update attack point
-                if spider_detected:
-                    attack_point = self.get_best_attack_point(current_spider_pos)
-                    if attack_point:
-                        pyautogui.moveTo(attack_point[0], attack_point[1], duration=0.1)
-            
-            # Return to character position after finishing
-            pyautogui.moveTo(self.character_point[0], self.character_point[1], duration=0.2)
-            
-            if not spider_detected:
-                self.root.after(0, lambda: self.status_var.set("Spider defeated!"))
-                time.sleep(0.5)  # Small delay before resuming mining
-            elif attempts >= max_attempts:
-                self.root.after(0, lambda: self.status_var.set("Max attack attempts reached"))
+                # Small sleep to prevent CPU overload
+                time.sleep(0.05)
+                
+                # Check if we should abort
+                if not self.running:
+                    print("[SPIDER] Attack sequence aborted")
+                    self.spider_status_var.set("Spider: Attack Aborted")
+                    self.spider_attack_in_progress = False
+                    return False
+                    
+            print("[SPIDER] Max attack time reached")
+            self.spider_status_var.set("Spider: Attack Timeout")
+            time.sleep(0.5)  # Small delay to show timeout status
+            self.spider_attack_in_progress = False
             
             return True
             
@@ -940,20 +1098,37 @@ class MiningMacroNoSpiders:
                             # Still no rock, switch to the next area
                             self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Still no rock. Switching area."))
                             
-                            # Track direction switches
+                            # Calculate new direction (1 or 2)
                             new_direction = 2 if self.current_strategy == 1 else 1
+                            
+                            print(f"Current: {self.current_strategy}, New: {new_direction}, Last: {self.last_direction}, Count: {self.direction_switches}")
+                            
+                            # Check if this is a direction switch (not the first time)
                             if self.last_direction is not None and self.last_direction != new_direction:
+                                print(f"Direction switch detected! Last: {self.last_direction}, New: {new_direction}")
                                 self.direction_switches += 1
-                                self.root.after(0, lambda: self.direction_switches_var.set(f"Direction Switches: {self.direction_switches}"))
+                                
+                                # Update the UI with the new count
+                                self.direction_switches_var.set(f"Direction Switches: {self.direction_switches}")
+                                self.root.update_idletasks()  # Force UI update
                                 
                                 # If we've switched directions twice, wait for the mining delay
                                 if self.direction_switches >= 2:
-                                    self.root.after(0, lambda: self.status_var.set("Waiting mining delay before continuing..."))
+                                    self.status_var.set("Waiting mining delay before continuing...")
+                                    self.root.update_idletasks()  # Force UI update
                                     time.sleep(self.mining_retry_timeout)
                                     self.direction_switches = 0  # Reset counter after delay
-                                    self.root.after(0, lambda: self.direction_switches_var.set("Direction Switches: 0"))
+                                    self.direction_switches_var.set("Direction Switches: 0")
+                                    self.root.update_idletasks()  # Force UI update
+                                    
+                                    # After delay, keep the current direction instead of switching
+                                    print(f"After delay, keeping direction: {self.current_strategy}")
+                                    self.last_direction = self.current_strategy
+                                    phase = 'search'
+                                    continue
                             
-                            self.last_direction = self.current_strategy
+                            # Update direction tracking for next iteration
+                            self.last_direction = new_direction  # Track the direction we're switching to
                             self.current_strategy = new_direction
                             phase = 'search' # Stay in search phase for the new area
                             
@@ -987,7 +1162,11 @@ class MiningMacroNoSpiders:
                     depleted_conf, _, _ = self.detect_any_template(screenshot_cv, self.mined_rock_templates, confidence=self.detection_confidence)
 
                     if depleted_conf > 0:
-                        # Rock is mined, check for spiders before switching areas
+                        # Rock is mined, increment counter
+                        self.rock_counter += 1
+                        self.root.after(0, lambda: self.rock_counter_var.set(f"Rocks Mined: {self.rock_counter}"))
+                        
+                        # Check for spiders before switching areas
                         self.root.after(0, lambda s=strategy_name: self.status_var.set(f"{s}: Area depleted. Checking for spiders..."))
                         
                         # Check for spiders and attack if found
@@ -997,11 +1176,11 @@ class MiningMacroNoSpiders:
                             # After handling spider, give a moment before continuing
                             time.sleep(0.5)
                         
-                        # Check for fire or smoke with confidence > 0.3
-                        fire_or_smoke_pos = self.detect_fire_or_smoke()
-                        if fire_or_smoke_pos is not None:
-                            self.root.after(0, lambda: self.status_var.set("Fire or smoke detected! Stopping macro for safety."))
-                            print("[SAFETY] Fire or smoke detected, stopping macro")
+                        # Check for fire with confidence > 0.5
+                        fire_pos = self.detect_fire()
+                        if fire_pos is not None:
+                            self.root.after(0, lambda: self.status_var.set("Fire detected! Stopping macro for safety."))
+                            print("[SAFETY] Fire detected, stopping macro")
                             self.stop_macro()
                             return
                         
