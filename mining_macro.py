@@ -654,48 +654,113 @@ class MiningMacroNoSpiders:
         self.selection_phase = 0
     
     def cleanup_overlay_elements(self):
-        """Clear visual elements from the overlay."""
-        if hasattr(self, 'canvas') and self.canvas.winfo_exists():
-            for tag in ['selection', 'click_point', 'character_point', 'instruction', 'spider_attack']:
-                self.canvas.delete(tag)
+        """Clear all visual elements from the overlay canvas."""
+        if not hasattr(self, 'canvas') or not self.canvas.winfo_exists():
+            return
+            
+        try:
+            # Remove all canvas items except the background
+            self.canvas.delete('all')
+            
+            # Clear marker tracking
+            self.click_marker_ids = []
+            self.character_marker_id = None
+            
+            # Clear any existing rectangle IDs
+            self.detection_region_1_rect_id = None
+            self.detection_region_2_rect_id = None
+            
+            # Clear spider and fire region rectangles
+            if hasattr(self, 'spider_detection_rect_id'):
+                try:
+                    self.canvas.delete(self.spider_detection_rect_id)
+                except tk.TclError:
+                    pass
+                delattr(self, 'spider_detection_rect_id')
+                
+            if hasattr(self, 'fire_detection_rect_id'):
+                try:
+                    self.canvas.delete(self.fire_detection_rect_id)
+                except tk.TclError:
+                    pass
+                delattr(self, 'fire_detection_rect_id')
+                
+        except Exception as e:
+            print(f"[ERROR] Error in cleanup_overlay_elements: {e}")
 
     def reset_selection(self):
-        """Reset the current selection and state."""
-        # First clean up any existing overlay elements if canvas exists
-        if hasattr(self, 'canvas') and self.canvas and self.canvas.winfo_exists():
-            self.cleanup_overlay_elements()
-        
-        # Reset all points and regions
-        self.selection_phase = 0
-        self.detection_region_1 = None
-        self.detection_region_2 = None
-        self.spider_detection_region = None
-        self.fire_detection_region = None
-        self.click_point_1 = None
-        self.click_point_2 = None
-        self.spider_attack_point_1 = None
-        self.spider_attack_point_2 = None
-        self.character_point = None
-        self.character_marker_id = None
-        
-        # Reset relative offsets
-        self.relative_mining_offset_1 = None
-        self.relative_mining_offset_2 = None
-        self.relative_spider_attack_offset_1 = None
-        self.relative_spider_attack_offset_2 = None
-        
-        # Recreate instruction text if canvas exists
-        if hasattr(self, 'canvas') and self.canvas and self.canvas.winfo_exists():
-            try:
-                self.canvas.delete('all')
-                self.instruction_text = self.canvas.create_text(
-                    10, 10, anchor='nw', 
-                    text="Phase 1/7: Set Mining Click Point 1.\n\nLeft-click your first mining action location.",
-                    fill='white', font=('Arial', 12), width=300, tags='instruction'
-                )
-            except (tk.TclError, AttributeError):
-                # Canvas might be destroyed during cleanup
-                pass
+        """Completely reset all selection state and UI elements."""
+        try:
+            # Reset all region tracking variables
+            self.selection_phase = 0
+            
+            # Clear all region data
+            self.detection_region_1 = None
+            self.detection_region_2 = None
+            self.spider_detection_region = None
+            self.fire_detection_region = None
+            
+            # Clear all points
+            self.click_point_1 = None
+            self.click_point_2 = None
+            self.spider_attack_point_1 = None
+            self.spider_attack_point_2 = None
+            self.character_point = None
+            
+            # Clear relative offsets
+            self.relative_mining_offset_1 = None
+            self.relative_mining_offset_2 = None
+            self.relative_spider_attack_offset_1 = None
+            self.relative_spider_attack_offset_2 = None
+            
+            # Clear temporary region tracking
+            self.detection_region_1_start = None
+            self.detection_region_1_rect_id = None
+            self.detection_region_2_start = None
+            self.detection_region_2_rect_id = None
+            
+            # Clear spider region tracking
+            if hasattr(self, 'spider_detection_region_start'):
+                delattr(self, 'spider_detection_region_start')
+            if hasattr(self, 'spider_detection_rect_id'):
+                delattr(self, 'spider_detection_rect_id')
+                
+            # Clear fire region tracking
+            if hasattr(self, 'fire_detection_region_start'):
+                delattr(self, 'fire_detection_region_start')
+            if hasattr(self, 'fire_detection_rect_id'):
+                delattr(self, 'fire_detection_rect_id')
+            
+            # Clean up canvas if it exists
+            if hasattr(self, 'canvas') and self.canvas and self.canvas.winfo_exists():
+                self.cleanup_overlay_elements()
+                
+                # Recreate instruction text
+                try:
+                    self.canvas.delete('all')
+                    screen_width = self.canvas.winfo_screenwidth()
+                    self.instruction_text = self.canvas.create_text(
+                        screen_width // 2, 30, 
+                        text="Phase 1/8: Set Mining Click Point 1.\n\nLeft-click your first mining action location.",
+                        fill='white', 
+                        font=('Arial', 12, 'bold'),
+                        anchor='center', 
+                        justify='center', 
+                        tags='instruction',
+                        width=screen_width - 20  # Add some padding
+                    )
+                except (tk.TclError, AttributeError) as e:
+                    print(f"[DEBUG] Error resetting canvas: {e}")
+                    
+            # Reset status
+            self.status_var.set("Selection reset. Please set up regions again.")
+            self.start_btn.config(state=tk.DISABLED)
+            self.stop_btn.config(state=tk.DISABLED)
+            self.reset_btn.config(state=tk.NORMAL)
+            
+        except Exception as e:
+            print(f"[ERROR] Error in reset_selection: {e}")
+            self.status_var.set(f"Error resetting selection: {str(e)}")
         
         self.update_instructions()
         
@@ -713,28 +778,44 @@ class MiningMacroNoSpiders:
         self.reset_selection()
 
     def cleanup_overlay(self):
-        """Clean up the overlay window and related attributes."""
-        # First clean up any canvas elements
-        if hasattr(self, 'canvas') and self.canvas and self.canvas.winfo_exists():
-            try:
-                self.cleanup_overlay_elements()
-                self.canvas.destroy()
-            except (tk.TclError, AttributeError):
-                pass
-        
-        # Then destroy the overlay window
-        if hasattr(self, 'overlay') and self.overlay:
-            try:
-                self.overlay.destroy()
-            except tk.TclError:
-                pass
-            self.overlay = None
+        """Safely clean up all overlay components."""
+        try:
+            # Clean up canvas elements first
+            if hasattr(self, 'canvas') and self.canvas:
+                try:
+                    if self.canvas.winfo_exists():
+                        self.cleanup_overlay_elements()
+                        self.canvas.destroy()
+                except tk.TclError as e:
+                    print(f"[DEBUG] Error destroying canvas: {e}")
+                finally:
+                    # Ensure we don't keep a reference to a destroyed canvas
+                    delattr(self, 'canvas')
             
-        # Clean up any remaining references
-        if hasattr(self, 'canvas'):
-            del self.canvas
-        if hasattr(self, 'instruction_text'):
-            del self.instruction_text
+            # Clean up the overlay window
+            if hasattr(self, 'overlay') and self.overlay:
+                try:
+                    if self.overlay.winfo_exists():
+                        self.overlay.grab_release()
+                        self.overlay.destroy()
+                except tk.TclError as e:
+                    print(f"[DEBUG] Error destroying overlay: {e}")
+                finally:
+                    self.overlay = None
+            
+            # Clean up other references
+            for attr in ['instruction_text', 'detection_region_1_rect_id', 
+                        'detection_region_2_rect_id', 'spider_detection_rect_id',
+                        'fire_detection_rect_id', 'character_marker_id']:
+                if hasattr(self, attr):
+                    delattr(self, attr)
+                    
+            # Clear any temporary state
+            self.click_marker_ids = []
+            
+        except Exception as e:
+            print(f"[ERROR] Error in cleanup_overlay: {e}")
+            self.status_var.set(f"Error cleaning up: {str(e)}")
 
     def start_macro(self):
         """Start the mining macro."""
@@ -748,10 +829,9 @@ class MiningMacroNoSpiders:
         self.reset_btn.config(state=tk.DISABLED)
         self.status_var.set("Running...")
         
-        # Initialize counters and stopwatch
+        # Initialize stopwatch and update UI
         self.session_start_time = time.time()
-        self.rock_counter = 0
-        self.rock_counter_var.set("Rocks Mined: 0")
+        self.rock_counter_var.set(f"Rocks Mined: {self.rock_counter}")
         self.update_stopwatch()
         
         # Initialize direction tracking
