@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
+from PIL import Image, ImageTk
 import pyautogui
 import pydirectinput
 import cv2
@@ -28,6 +29,10 @@ class MiningMacroNoSpiders:
         """Initialize the mining macro application."""
         self.root = root
         self.root.title("Mining Macro (No Spiders)")
+        
+        # Screenshot preview
+        self.preview_label = None
+        self.preview_size = (200, 150)  # Width, Height
         
         # State
         self.detection_region_1: Optional[Tuple[int, int, int, int]] = None
@@ -80,9 +85,16 @@ class MiningMacroNoSpiders:
         self.spider_confidence_var = tk.StringVar(value="0.7")
         self.spider_confidence: float = 0.7
         
-        # Spider attack status
+        # Spider attack status and confidence
         self.spider_status_var = tk.StringVar(value="Spider: Not Detected")
+        self.spider_confidence_display = tk.StringVar(value="Confidence: N/A")
         self.spider_attack_in_progress = False
+        self.last_spider_confidence = 0.0
+        
+        # Fire detection status and confidence
+        self.fire_status_var = tk.StringVar(value="Fire: Not Detected")
+        self.fire_confidence_display = tk.StringVar(value="Confidence: N/A")
+        self.last_fire_confidence = 0.0
         
         # Debug settings
         self.ENABLE_DEBUG = False
@@ -196,6 +208,16 @@ class MiningMacroNoSpiders:
         spider_confidence_entry.bind('<Return>', self._validate_spider_confidence)
         spider_confidence_entry.bind('<FocusOut>', self._validate_spider_confidence)
         
+        # Add spider confidence display
+        ttk.Label(spider_frame, textvariable=self.spider_confidence_display).pack(side='left', padx=5)
+        
+        # Fire confidence display
+        fire_frame = ttk.Frame(confidence_frame)
+        fire_frame.pack(fill='x', pady=2)
+        ttk.Label(fire_frame, text="Fire Detection:").pack(side='left')
+        ttk.Label(fire_frame, textvariable=self.fire_confidence_display).pack(side='left', padx=5)
+        ttk.Label(fire_frame, textvariable=self.fire_status_var).pack(side='left', padx=5)
+        
         # Timeout settings frame
         timeout_frame = ttk.Frame(self.frame)
         timeout_frame.pack(fill=tk.X, pady=(5, 0))
@@ -230,16 +252,50 @@ class MiningMacroNoSpiders:
         status = ttk.Label(self.frame, textvariable=self.status_var, font=('TkDefaultFont', 10, 'bold'), foreground='blue')
         status.pack(pady=(5, 0))
         
-        # Spider status display
-        spider_status = ttk.Label(self.frame, textvariable=self.spider_status_var, 
-                               font=('TkDefaultFont', 10), foreground='red')
-        spider_status.pack(pady=(2, 5))
-
-        self.asset_status_label = ttk.Label(self.frame, textvariable=self.asset_status_var, font=('TkDefaultFont', 9), foreground='gray')
-        self.asset_status_label.pack(pady=(0, 5))
-
-        confidence_label = ttk.Label(self.frame, textvariable=self.confidence_var, font=('TkDefaultFont', 9), foreground='purple')
-        confidence_label.pack(pady=(0, 2))
+        # Detection status frame
+        detection_status_frame = ttk.LabelFrame(self.frame, text="Detection Status", padding=5)
+        detection_status_frame.pack(fill=tk.X, pady=(10, 5), padx=2)
+        
+        # Spider status
+        spider_status_frame = ttk.Frame(detection_status_frame)
+        spider_status_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(spider_status_frame, text="Spider:", width=12, anchor='w').pack(side=tk.LEFT)
+        ttk.Label(spider_status_frame, textvariable=self.spider_status_var, width=15, anchor='w').pack(side=tk.LEFT)
+        ttk.Label(spider_status_frame, textvariable=self.spider_confidence_display, width=20, anchor='w').pack(side=tk.LEFT)
+        
+        # Fire status
+        fire_status_frame = ttk.Frame(detection_status_frame)
+        fire_status_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(fire_status_frame, text="Fire:", width=12, anchor='w').pack(side=tk.LEFT)
+        ttk.Label(fire_status_frame, textvariable=self.fire_status_var, width=15, anchor='w').pack(side=tk.LEFT)
+        ttk.Label(fire_status_frame, textvariable=self.fire_confidence_display, width=20, anchor='w').pack(side=tk.LEFT)
+        
+        # Rock detection confidence
+        rock_confidence_frame = ttk.Frame(detection_status_frame)
+        rock_confidence_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(rock_confidence_frame, text="Rock Detection:", width=12, anchor='w').pack(side=tk.LEFT)
+        ttk.Label(rock_confidence_frame, textvariable=self.confidence_var, width=35, anchor='w').pack(side=tk.LEFT)
+        
+        # Rock depletion confidence
+        self.depletion_confidence_var = tk.StringVar(value="Depletion: N/A")
+        depletion_frame = ttk.Frame(detection_status_frame)
+        depletion_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(depletion_frame, text="Rock Depletion:", width=12, anchor='w').pack(side=tk.LEFT)
+        ttk.Label(depletion_frame, textvariable=self.depletion_confidence_var, width=35, anchor='w').pack(side=tk.LEFT)
+        
+        # Direction switches counter
+        ttk.Label(detection_status_frame, textvariable=self.direction_switches_var).pack(anchor='w')
+        
+        # Preview window
+        preview_frame = ttk.LabelFrame(self.frame, text="Preview", padding=5)
+        preview_frame.pack(fill='x', pady=5, padx=2)
+        self.preview_label = ttk.Label(preview_frame)
+        self.preview_label.pack()
+        
+        # Asset status at the bottom
+        self.asset_status_label = ttk.Label(self.frame, textvariable=self.asset_status_var, 
+                                         font=('TkDefaultFont', 9), foreground='gray')
+        self.asset_status_label.pack(pady=(10, 5))
         
         # Add direction switches counter display
         direction_label = ttk.Label(self.frame, textvariable=self.direction_switches_var, font=('TkDefaultFont', 9), foreground='orange')
@@ -832,6 +888,7 @@ class MiningMacroNoSpiders:
         # Initialize stopwatch and update UI
         self.session_start_time = time.time()
         self.rock_counter_var.set(f"Rocks Mined: {self.rock_counter}")
+        self.depletion_confidence_var.set("Depletion: N/A")
         self.update_stopwatch()
         
         # Initialize direction tracking
@@ -842,6 +899,12 @@ class MiningMacroNoSpiders:
         self.macro_thread = threading.Thread(target=self.run_macro, daemon=True)
         self.macro_thread.start()
     
+    def _update_preview(self, photo):
+        """Update the preview window with a new image."""
+        if self.preview_label:
+            self.preview_label.configure(image=photo)
+            self.preview_label.image = photo  # Keep a reference
+            
     def stop_macro(self):
         """Stop the mining macro."""
         self.running = False
@@ -849,6 +912,12 @@ class MiningMacroNoSpiders:
         self.stop_btn.config(state=tk.DISABLED)
         self.reset_btn.config(state=tk.NORMAL)
         self.status_var.set("Stopped")
+        
+        # Clear preview when stopping
+        if hasattr(self, 'preview_label') and self.preview_label:
+            self.preview_label.configure(image='')
+            if hasattr(self.preview_label, 'image'):
+                self.preview_label.image = None
         
         # Accumulate elapsed time
         if self.session_start_time is not None:
@@ -883,12 +952,18 @@ class MiningMacroNoSpiders:
                 confidence=0.8
             )
             
+            # Update fire confidence display
+            self.last_fire_confidence = fire_conf
+            self.fire_confidence_display.set(f"Confidence: {fire_conf:.2f}")
+            
             if fire_conf > 0:
                 # Convert local coordinates to screen coordinates
                 fire_x = x + fire_loc[0] + (fire_size[0] // 2) if fire_size else x + fire_loc[0]
                 fire_y = y + fire_loc[1] + (fire_size[1] // 2) if fire_size else y + fire_loc[1]
+                self.fire_status_var.set("Fire: Detected!")
                 return (fire_x, fire_y)
                 
+            self.fire_status_var.set("Fire: Not Detected")
             return None
             
         except Exception as e:
@@ -980,6 +1055,10 @@ class MiningMacroNoSpiders:
             if self.ENABLE_DEBUG:
                 print(f"[DEBUG] Spider detection - Confidence: {spider_conf:.2f}, Location: {spider_loc}, Size: {spider_size}")
             
+            # Update confidence display whether spider is detected or not
+            self.last_spider_confidence = spider_conf
+            self.spider_confidence_display.set(f"Confidence: {spider_conf:.2f}")
+            
             if spider_conf > 0 and spider_loc is not None and spider_size is not None:
                 # Convert local coordinates to screen coordinates
                 spider_x = x + spider_loc[0] + (spider_size[0] // 2)
@@ -990,6 +1069,8 @@ class MiningMacroNoSpiders:
                     
                 self.spider_status_var.set(f"Spider Detected! (Confidence: {spider_conf:.2f})")
                 return (spider_x, spider_y)
+            else:
+                self.spider_status_var.set("Spider: Not Detected")
                 
         except Exception as e:
             error_msg = f"Error checking for spiders: {str(e)}"
@@ -1211,10 +1292,7 @@ class MiningMacroNoSpiders:
                             self.last_direction = new_direction  # Track the direction we're switching to
                             self.current_strategy = new_direction
                             phase = 'search' # Stay in search phase for the new area
-                            
-                            # Add random variation of ±0.075s to the 1.0s pause (0.925s to 1.075s range)
-                            random_switch_delay = 1.0 + random.uniform(-0.075, 0.075)
-                            time.sleep(max(0.5, random_switch_delay))  # Ensure minimum 0.5s delay
+                            time.sleep(self.area_switch_timeout)
                             continue
 
                 # === MINING PHASE (2nd phase) ===
@@ -1240,6 +1318,15 @@ class MiningMacroNoSpiders:
                     screenshot = pyautogui.screenshot(region=active_detection_region)
                     screenshot_cv = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
                     depleted_conf, _, _ = self.detect_any_template(screenshot_cv, self.mined_rock_templates, confidence=self.detection_confidence)
+                    
+                    # Update preview window
+                    preview_img = cv2.resize(screenshot_cv, self.preview_size)
+                    preview_img = cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB)
+                    preview_img = Image.fromarray(preview_img)
+                    preview_photo = ImageTk.PhotoImage(image=preview_img)
+                    self.root.after(0, self._update_preview, preview_photo)
+                    
+                    self.root.after(0, lambda conf=depleted_conf: self.depletion_confidence_var.set(f"Depletion: {conf:.2f}"))
 
                     if depleted_conf > 0:
                         # Rock is mined, increment counter
@@ -1260,7 +1347,7 @@ class MiningMacroNoSpiders:
                         fire_pos = self.detect_fire()
                         if fire_pos is not None:
                             self.root.after(0, lambda: self.status_var.set("Fire detected! Stopping macro for safety."))
-                            print("[SAFETY] Fire detected, stopping macro")
+                            print(f"[SAFETY] Fire detected with confidence {self.last_fire_confidence:.2f}, stopping macro")
                             self.stop_macro()
                             return
                         
